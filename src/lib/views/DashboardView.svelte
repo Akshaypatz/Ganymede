@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { items, dashboardStats, activeView, addToast, issueFilter, attentionRules } from "../stores/app";
+  import { items, dashboardStats, activeView, addToast, issueFilter, attentionRules, currentUser } from "../stores/app";
   import { getDashboardStats, listItems, updateItem, listBlockedTasks, updateTask } from "../api";
   import type { Item, Task } from "../types";
 
@@ -69,7 +69,7 @@
 </script>
 
 <div class="page-header">
-  <div class="page-title">{greeting}, Akshay.</div>
+  <div class="page-title">{greeting}{$currentUser?.name ? `, ${$currentUser.name}` : ''}.</div>
   <div class="page-sub">{dateStr}{stats.p0_count > 0 ? ` · ${stats.p0_count} P0 issues need immediate attention` : ""}</div>
 </div>
 
@@ -98,6 +98,11 @@
     <div class="sc-label">Active Projects</div>
     <div class="sc-num">{stats.total_projects}</div>
     <div class="sc-sub">{stats.total_projects === 0 ? 'none yet' : 'in progress'}</div>
+  </button>
+  <button class="stat-card indigo" on:click={() => activeView.set('checkin')}>
+    <div class="sc-label">Pending on Me</div>
+    <div class="sc-num">{$items.filter(i => i.status === 'pending_me').length}</div>
+    <div class="sc-sub">my dependencies</div>
   </button>
 </div>
 
@@ -169,6 +174,7 @@
   .stat-card.yellow::after { background: var(--p2); }
   .stat-card.green::after { background: var(--green); }
   .stat-card.gray::after { background: var(--fg-4); }
+  .stat-card.indigo::after { background: #6366f1; }
   .stat-card:hover { border-color: var(--border-2); transform: translateY(-1px); box-shadow: var(--shadow); }
   .sc-label { font-size: 10px; color: var(--fg-3); font-weight: 500; }
   .sc-num { font-size: 26px; font-weight: 800; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; line-height: 1; }

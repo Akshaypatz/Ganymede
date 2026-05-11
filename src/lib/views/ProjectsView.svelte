@@ -75,7 +75,7 @@
 
 <div class="page-header">
   <div class="page-title">Projects</div>
-  <div class="page-sub">{$projects.length} active · {$projects.filter(p => p.health === 'amber' || p.health === 'red').length} at risk</div>
+  <div class="page-sub">{$projects.length} active · {$projects.filter(p => p.health === 'amber' || p.health === 'red').length} need attention</div>
 </div>
 
 <div class="pipeline-wrap">

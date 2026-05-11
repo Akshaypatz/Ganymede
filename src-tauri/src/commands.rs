@@ -119,7 +119,7 @@ pub fn delete_project(db: State<Database>, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn list_items(db: State<Database>, item_type: Option<String>, status: Option<String>, project_id: Option<String>, priority: Option<String>) -> Result<Vec<Item>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let mut sql = String::from("SELECT i.id, i.project_id, i.type, i.title, i.body, i.priority, i.status, i.assignee, i.due_at, i.created_at, i.updated_at, p.name FROM items i LEFT JOIN projects p ON i.project_id = p.id WHERE 1=1");
+    let mut sql = String::from("SELECT i.id, i.project_id, i.type, i.title, i.body, i.priority, i.status, i.assignee, i.due_at, i.created_at, i.updated_at, p.name, i.category FROM items i LEFT JOIN projects p ON i.project_id = p.id WHERE 1=1");
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut param_idx = 1;
     if let Some(ref t) = item_type {
@@ -161,6 +161,7 @@ pub fn list_items(db: State<Database>, item_type: Option<String>, status: Option
             updated_at: row.get(10)?,
             tags: Vec::new(),
             project_name: row.get(11)?,
+            category: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
         })
     }).map_err(|e| e.to_string())?;
 
@@ -196,11 +197,12 @@ pub fn create_item(db: State<Database>, data: CreateItem) -> Result<Item, String
         updated_at: now,
         tags: Vec::new(),
         project_name: None,
+        category: data.category.unwrap_or_default(),
     };
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO items (id, project_id, type, title, body, priority, status, assignee, due_at, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-        rusqlite::params![item.id, item.project_id, item.r#type, item.title, item.body, item.priority, item.status, item.assignee, item.due_at, item.created_at, item.updated_at],
+        "INSERT INTO items (id, project_id, type, title, body, priority, status, assignee, due_at, created_at, updated_at, category) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        rusqlite::params![item.id, item.project_id, item.r#type, item.title, item.body, item.priority, item.status, item.assignee, item.due_at, item.created_at, item.updated_at, item.category],
     ).map_err(|e| e.to_string())?;
     // Attach tags
     if let Some(ref tag_ids) = data.tag_ids {
@@ -221,8 +223,8 @@ pub fn update_item(db: State<Database>, data: UpdateItem) -> Result<Item, String
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
     let mut existing = conn.query_row(
-        "SELECT id, project_id, type, title, body, priority, status, assignee, due_at, created_at, updated_at FROM items WHERE id=?1", [&data.id],
-        |row| Ok(Item { id: row.get(0)?, project_id: row.get(1)?, r#type: row.get(2)?, title: row.get(3)?, body: row.get(4)?, priority: row.get(5)?, status: row.get(6)?, assignee: row.get(7)?, due_at: row.get(8)?, created_at: row.get(9)?, updated_at: row.get(10)?, tags: Vec::new(), project_name: None })
+        "SELECT id, project_id, type, title, body, priority, status, assignee, due_at, created_at, updated_at, category FROM items WHERE id=?1", [&data.id],
+        |row| Ok(Item { id: row.get(0)?, project_id: row.get(1)?, r#type: row.get(2)?, title: row.get(3)?, body: row.get(4)?, priority: row.get(5)?, status: row.get(6)?, assignee: row.get(7)?, due_at: row.get(8)?, created_at: row.get(9)?, updated_at: row.get(10)?, tags: Vec::new(), project_name: None, category: row.get::<_, Option<String>>(11)?.unwrap_or_default() })
     ).map_err(|e| e.to_string())?;
     if data.project_id.is_some() { existing.project_id = data.project_id; }
     if let Some(v) = data.r#type { existing.r#type = v; }
@@ -240,10 +242,11 @@ pub fn update_item(db: State<Database>, data: UpdateItem) -> Result<Item, String
     }
     if let Some(v) = data.assignee { existing.assignee = v; }
     if data.due_at.is_some() { existing.due_at = data.due_at; }
+    if let Some(v) = data.category { existing.category = v; }
     existing.updated_at = now;
     conn.execute(
-        "UPDATE items SET project_id=?1, type=?2, title=?3, body=?4, priority=?5, status=?6, assignee=?7, due_at=?8, updated_at=?9 WHERE id=?10",
-        rusqlite::params![existing.project_id, existing.r#type, existing.title, existing.body, existing.priority, existing.status, existing.assignee, existing.due_at, existing.updated_at, existing.id],
+        "UPDATE items SET project_id=?1, type=?2, title=?3, body=?4, priority=?5, status=?6, assignee=?7, due_at=?8, updated_at=?9, category=?10 WHERE id=?11",
+        rusqlite::params![existing.project_id, existing.r#type, existing.title, existing.body, existing.priority, existing.status, existing.assignee, existing.due_at, existing.updated_at, existing.category, existing.id],
     ).map_err(|e| e.to_string())?;
     // Update tags if provided
     if let Some(ref tag_ids) = data.tag_ids {
@@ -648,6 +651,23 @@ pub fn update_task(db: State<Database>, data: UpdateTask) -> Result<Task, String
     // Update project progress
     update_project_progress(&conn, &existing.project_id);
     Ok(existing)
+}
+
+#[tauri::command]
+pub fn list_pending_me_tasks(db: State<Database>) -> Result<Vec<Task>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.project_id, t.title, t.description, t.status, t.assignee_id, t.position, t.created_at, t.updated_at, m.name, p.name FROM tasks t LEFT JOIN members m ON t.assignee_id = m.id JOIN projects p ON t.project_id = p.id WHERE t.status = 'pending_me' ORDER BY t.updated_at DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok(Task {
+        id: r.get(0)?, project_id: r.get(1)?, title: r.get(2)?, description: r.get(3)?,
+        status: r.get(4)?, assignee_id: r.get(5)?, position: r.get(6)?,
+        created_at: r.get(7)?, updated_at: r.get(8)?, assignee_name: r.get(9)?,
+        project_name: r.get(10)?,
+    })).map_err(|e| e.to_string())?;
+    let mut tasks = Vec::new();
+    for r in rows { tasks.push(r.map_err(|e| e.to_string())?); }
+    Ok(tasks)
 }
 
 #[tauri::command]

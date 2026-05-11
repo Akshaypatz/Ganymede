@@ -8,6 +8,8 @@ import type {
   Member, CreateMember, UpdateMember,
   Task, CreateTask, UpdateTask,
   AiChatRequest, AiChatResponse, AiAction, AiConversation, AiMessage,
+  CheckinReport,
+  Reminder,
 } from "./types";
 
 // ─── Projects ───────────────────────────────────────
@@ -74,6 +76,7 @@ export const deleteMember = (id: string) => invoke<void>("delete_member", { id }
 // ─── Tasks ──────────────────────────────────────────
 export const listTasks = (projectId: string) => invoke<Task[]>("list_tasks", { projectId });
 export const listBlockedTasks = () => invoke<Task[]>("list_blocked_tasks");
+export const listPendingMeTasks = () => invoke<Task[]>("list_pending_me_tasks");
 export const createTask = (data: CreateTask) => invoke<Task>("create_task", { data });
 export const updateTask = (data: UpdateTask) => invoke<Task>("update_task", { data });
 export const deleteTask = (id: string) => invoke<void>("delete_task", { id });
@@ -87,3 +90,21 @@ export const listAiConversations = () =>
   invoke<AiConversation[]>("list_ai_conversations");
 export const getAiMessages = (conversationId: string) =>
   invoke<AiMessage[]>("get_ai_messages", { conversationId });
+
+// ─── Check-in Engine ────────────────────────────────
+export const getCheckinReport = () => invoke<CheckinReport>("get_checkin_report");
+export const snoozeCheckinItem = (id: string, days: number) =>
+  invoke<void>("snooze_checkin_item", { id, days });
+// ─── Reminders ─────────────────────────────────────────
+export const createReminder = (data: { item_id: string; due_at: string; tune?: string; label?: string; recurrence?: string }) =>
+  invoke<Reminder>("create_reminder", { data });
+export const listReminders = (itemId?: string) =>
+  invoke<Reminder[]>("list_reminders", { itemId });
+export const getDueReminders = () => invoke<Reminder[]>("get_due_reminders");
+export const completeReminder = (id: string) => invoke<void>("complete_reminder", { id });
+export const snoozeReminder = (id: string, minutes: number) =>
+  invoke<void>("snooze_reminder", { id, minutes });
+export const deleteReminder = (id: string) => invoke<void>("delete_reminder", { id });
+
+// ─── Auth ────────────────────────────────────────────
+export const tryBiometricAuth = () => invoke<string>("try_biometric_auth");

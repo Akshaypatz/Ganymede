@@ -86,7 +86,7 @@
   function close() { dispatch("close"); }
 </script>
 
-<svelte:window on:keydown={(e) => e.key === 'Escape' && close()} />
+<svelte:window on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } }} />
 
 <div class="overlay" on:click|self={close} role="dialog">
   <div class="modal issue-modal">

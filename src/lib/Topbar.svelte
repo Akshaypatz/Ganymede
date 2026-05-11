@@ -4,6 +4,8 @@
     isDark,
     showCommandPalette,
     showQuickAdd,
+    checkinReport,
+    activeView,
   } from "./stores/app";
   import { setSetting } from "./api";
 
@@ -22,6 +24,8 @@
       return next;
     });
   }
+
+  $: attentionCount = $checkinReport?.total_attention ?? 0;
 </script>
 
 <div class="topbar">
@@ -42,6 +46,12 @@
   </button>
 
   <div class="topbar-right">
+    {#if attentionCount > 0}
+      <button class="nudge-btn" on:click={() => activeView.set('checkin')} title="{attentionCount} items need attention">
+        <span class="nudge-dot"></span>
+        <span class="nudge-count">{attentionCount}</span>
+      </button>
+    {/if}
     <button class="btn btn-ghost" on:click={() => showQuickAdd.set(true)}>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <line x1="12" y1="5" x2="12" y2="19"/>
@@ -84,6 +94,23 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
   }
   .topbar-right { margin-inline-start: auto; display: flex; align-items: center; gap: 5px; }
+  .nudge-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: var(--r); border: 1px solid rgba(249,115,22,.3);
+    background: rgba(249,115,22,.08); cursor: pointer; transition: all 120ms;
+    color: var(--orange); font-size: 11px; font-weight: 700;
+  }
+  .nudge-btn:hover { background: rgba(249,115,22,.15); border-color: rgba(249,115,22,.5); }
+  .nudge-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--orange);
+    animation: nudge-pulse 2s ease infinite;
+    flex-shrink: 0;
+  }
+  @keyframes nudge-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(249,115,22,.5); }
+    50% { box-shadow: 0 0 0 5px rgba(249,115,22,0); }
+  }
+  .nudge-count { line-height: 1; }
   .avatar {
     width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
     background: linear-gradient(135deg, var(--orange-deep), var(--orange-dim));

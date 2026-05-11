@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { activeView, activeProjectId, members, addToast } from "../stores/app";
+  import { activeView, activeProjectId, members, addToast, pendingMeTasks } from "../stores/app";
   import {
     getProject, updateProject, listMembers, createMember, createTask, deleteProject,
     updateTask, deleteTask,
@@ -108,6 +108,20 @@
     await loadProject();
   }
 
+  async function toggleTaskPendingMe(task: Task) {
+    if (task.status === "pending_me") {
+      await updateTask({ id: task.id, status: "todo" });
+      pendingMeTasks.update(list => list.filter(t => t.id !== task.id));
+      addToast(`Unpinned: "${task.title.slice(0, 40)}"`  , "⬡");
+    } else {
+      await updateTask({ id: task.id, status: "pending_me" });
+      const pinned: Task = { ...task, status: "pending_me", project_name: project?.name ?? null };
+      pendingMeTasks.update(list => [...list.filter(t => t.id !== task.id), pinned]);
+      addToast(`Pinned to Pending on Me`, "⬡");
+    }
+    await loadProject();
+  }
+
   async function removeTask(taskId: string) {
     await deleteTask(taskId);
     if (project) {
@@ -147,6 +161,7 @@
   }, {} as Record<TaskStatus, Task[]>);
 
   $: blockedTasks = project?.tasks.filter((t) => t.status === "blocked") || [];
+  $: pendingMeProjectTasks = project?.tasks.filter((t) => t.status === "pending_me") || [];
 
   $: totalTasks = project?.tasks.length ?? 0;
   $: doneTasks = project?.tasks.filter((t) => t.status === "done").length ?? 0;
@@ -312,6 +327,23 @@
       </div>
     {/if}
 
+    {#if pendingMeProjectTasks.length > 0}
+      <div class="pending-me-section">
+        <div class="pending-me-hdr">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span>Pending on Me ({pendingMeProjectTasks.length})</span>
+        </div>
+        {#each pendingMeProjectTasks as task}
+          <div class="blocked-task-row">
+            <span class="blocked-task-title">{task.title}</span>
+            <button class="btn-micro unpin-btn" on:click={() => toggleTaskPendingMe(task)} title="Unpin (back to To Do)">↩ Unpin</button>
+            <button class="btn-micro" on:click={() => changeTaskStatus(task.id, "done")} title="Mark done">✓ Done</button>
+            <button class="btn-micro del" on:click={() => removeTask(task.id)} title="Delete">✗</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
     <div class="tasks-board">
       {#each taskStatuses as status}
         <div class="task-column">
@@ -353,6 +385,7 @@
                   {/if}
                   <button class="btn-micro del" on:click={() => removeTask(task.id)} title="Delete">✗</button>
                   <button class="btn-micro block-btn" on:click={() => changeTaskStatus(task.id, "blocked")} title="Mark blocked">⛔</button>
+                  <button class="btn-micro pin-btn" on:click={() => toggleTaskPendingMe(task)} title="Pin to Pending on Me">⬡</button>
                 </div>
               </div>
             {:else}
@@ -499,6 +532,17 @@
     border-top: 1px solid rgba(239,68,68,.12);
   }
   .blocked-task-title { flex: 1; font-size: 12px; font-weight: 550; color: var(--fg-2); }
+
+  .pending-me-section {
+    background: rgba(99,102,241,.05); border: 1px solid rgba(99,102,241,.25); border-radius: var(--r-lg);
+    padding: 10px 12px; margin-bottom: 14px;
+  }
+  .pending-me-hdr {
+    display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
+    color: #818cf8; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .unpin-btn:hover { color: #818cf8; border-color: #818cf8; }
+  .pin-btn:hover { color: #818cf8; border-color: rgba(99,102,241,.4); }
 
   @media (max-width: 900px) {
     .tasks-board { grid-template-columns: repeat(2, 1fr); }

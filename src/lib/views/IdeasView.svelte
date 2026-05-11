@@ -23,12 +23,14 @@
   let editStage = "";
   let dragItem: Item | null = null;
   let dragOverCol = "";
+  let showArchived = false;
 
   onMount(async () => {
     try { const it = await listItems({}); items.set(it); } catch {}
   });
 
   $: ideas = $items.filter((i) => i.type === "idea" && i.status !== "done");
+  $: archivedIdeas = $items.filter((i) => i.type === "idea" && i.status === "done");
 
   // Reactive per-stage grouping — re-runs whenever ideas changes
   $: ideasByStage = stages.reduce((acc, s) => {
@@ -76,6 +78,12 @@
     addToast(`Archived: "${item.title.slice(0, 40)}"`, "✓");
   }
 
+  async function unarchiveIdea(item: Item) {
+    await updateItem({ id: item.id, status: "brainstorm" as any });
+    items.update((list) => list.map((i) => (i.id === item.id ? { ...i, status: "brainstorm" as any } : i)));
+    addToast(`Restored: "${item.title.slice(0, 40)}"`, "↩");
+  }
+
   async function removeIdea(item: Item) {
     await deleteItem(item.id);
     items.update((list) => list.filter((i) => i.id !== item.id));
@@ -114,7 +122,7 @@
   }
 </script>
 
-<svelte:window on:keydown={(e) => { if (e.key === 'Escape') { editingItem = null; showCreateModal = false; } }} />
+<svelte:window on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); editingItem = null; showCreateModal = false; } }} />
 
 <div class="page-header">
   <div class="page-hdr-row">
@@ -122,6 +130,14 @@
       <div class="page-title">Idea Board</div>
       <div class="page-sub">Brainstorm and plan upcoming projects and sprints</div>
     </div>
+    {#if archivedIdeas.length > 0}
+      <button class="archived-toggle-btn" on:click={() => showArchived = !showArchived}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+        Archived
+        <span class="arch-toggle-count">{archivedIdeas.length}</span>
+        <svg class="arch-chevron" class:open={showArchived} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    {/if}
   </div>
 </div>
 
@@ -129,13 +145,17 @@
   {#each stages as stage}
     <div
       class="board-col"
+      style="--col-color:{stage.color}"
       class:drag-over={dragOverCol === stage.key}
       on:dragover={(e) => handleDragOver(e, stage.key)}
       on:dragleave={handleDragLeave}
       on:drop={(e) => handleDrop(e, stage.key)}
       role="list"
     >
-      <div class="board-col-hdr" style="background:{stage.bg};color:{stage.color};border-color:{stage.color}33">
+      <div class="col-hdr">
+        <span class="col-hdr-dot" style="background:{stage.color}"></span>
+        <span class="col-hdr-label" style="color:{stage.color}">{stage.label}</span>
+        <span class="col-hdr-count" style="background:{stage.color}1f;color:{stage.color}">{ideasByStage[stage.key]?.length ?? 0}</span>
         <button
           class="col-hdr-add"
           style="color:{stage.color}"
@@ -144,8 +164,6 @@
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
-        <span class="col-hdr-label">{stage.label}</span>
-        <span class="col-count" style="background:{stage.color}22">{ideasByStage[stage.key]?.length ?? 0}</span>
       </div>
       <div class="board-col-body">
         {#each ideasByStage[stage.key] ?? [] as item (item.id)}
@@ -164,8 +182,9 @@
             {/if}
             <div class="idea-footer">
               <span class="idea-date">{new Date(item.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-              <button class="idea-archive" on:click|stopPropagation={() => archiveIdea(item)} title="Archive">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <button class="idea-archive" on:click|stopPropagation={() => archiveIdea(item)} title="Archive idea">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                Archive
               </button>
             </div>
           </div>
@@ -176,6 +195,27 @@
     </div>
   {/each}
 </div>
+
+{#if showArchived && archivedIdeas.length > 0}
+<div class="archived-section">
+  <div class="archived-section-hdr">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+    <span>Archived ideas</span>
+    <span class="archived-section-count">{archivedIdeas.length}</span>
+  </div>
+  <div class="archived-list">
+    {#each archivedIdeas as item (item.id)}
+      <div class="archived-chip">
+        <span class="arch-chip-title">{item.title}</span>
+        <button class="arch-restore-btn" on:click={() => unarchiveIdea(item)} title="Restore to Brainstorm">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+          Restore
+        </button>
+      </div>
+    {/each}
+  </div>
+</div>
+{/if}
 
 <!-- Edit modal -->
 {#if editingItem}
@@ -274,6 +314,22 @@
   .page-title { font-size: 17px; font-weight: 750; letter-spacing: -0.03em; }
   .page-sub { font-size: 12px; color: var(--fg-3); margin-top: 3px; }
 
+  /* Archive toggle button in header */
+  .archived-toggle-btn {
+    display: flex; align-items: center; gap: 6px; margin-top: 2px;
+    padding: 5px 12px; border-radius: var(--r-lg); cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 11px; font-weight: 600; color: var(--fg-3);
+    transition: all 100ms;
+  }
+  .archived-toggle-btn:hover { border-color: var(--border-2); color: var(--fg); }
+  .arch-toggle-count {
+    font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 99px;
+    background: var(--surface); color: var(--fg-4);
+  }
+  .arch-chevron { transition: transform 150ms; }
+  .arch-chevron.open { transform: rotate(180deg); }
+
   .col-add-btn {
     display: none;
   }
@@ -317,48 +373,63 @@
   }
   .board-col { display: flex; flex-direction: column; min-height: 200px; transition: all 150ms; }
   .board-col.drag-over { transform: scale(1.01); }
-  .board-col-hdr {
-    display: flex; align-items: center; gap: 6px;
-    padding: 6px 8px 6px 6px; border-radius: var(--r-lg) var(--r-lg) 0 0;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-    border: 1px solid; border-bottom: none;
+
+  /* Clean flat column header — dot + label + count + add */
+  .col-hdr {
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 2px 9px 2px;
+  }
+  .col-hdr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .col-hdr-label {
+    flex: 1; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.03em; text-transform: uppercase;
+  }
+  .col-hdr-count {
+    font-size: 10px; font-weight: 800; padding: 1px 7px;
+    border-radius: 99px; min-width: 20px; text-align: center;
   }
   .col-hdr-add {
     width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
-    border-radius: 4px; background: none; cursor: pointer; opacity: 0.7;
+    border-radius: 4px; background: none; cursor: pointer; opacity: 0.55;
     transition: opacity 120ms, background 120ms; flex-shrink: 0;
   }
-  .col-hdr-add:hover { opacity: 1; background: rgba(255,255,255,.12); }
-  .col-hdr-label { flex: 1; }
-  .col-count {
-    font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 99px; min-width: 18px; text-align: center;
-  }
+  .col-hdr-add:hover { opacity: 1; background: rgba(255,255,255,.1); }
+
+  /* Column body — standalone bordered card */
   .board-col-body {
     flex: 1; display: flex; flex-direction: column; gap: 6px;
-    padding: 8px; border: 1px solid var(--border); border-top: none;
-    border-radius: 0 0 var(--r-lg) var(--r-lg); background: var(--surface);
+    padding: 8px; border: 1px solid var(--border);
+    border-radius: var(--r-lg); background: var(--surface);
     min-height: 80px;
   }
   .board-col.drag-over .board-col-body { background: var(--surface-2); border-color: var(--border-2); }
   .board-empty { font-size: 11px; color: var(--fg-4); text-align: center; padding: 20px 0; }
 
   .idea-card {
-    background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-lg);
+    background: var(--bg); border: 1px solid var(--border); border-left-width: 2px; border-radius: var(--r-lg);
     padding: 10px 12px; cursor: grab; transition: all 130ms;
     display: flex; flex-direction: column; gap: 6px;
   }
-  .idea-card:hover { border-color: var(--border-2); box-shadow: var(--shadow); }
+  .idea-card:hover {
+    border-color: var(--border-2); border-left-color: var(--col-color, var(--border-2));
+    box-shadow: var(--shadow);
+  }
   .idea-card:active { cursor: grabbing; }
   .idea-title { font-size: 12px; font-weight: 560; color: var(--fg); line-height: 1.4; }
   .idea-body { font-size: 11px; color: var(--fg-3); line-height: 1.4; }
-  .idea-footer { display: flex; align-items: center; justify-content: space-between; }
+  .idea-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
   .idea-date { font-size: 9px; color: var(--fg-4); }
   .idea-archive {
-    width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
-    color: var(--fg-4); border: 1px solid var(--border); border-radius: 4px;
-    background: none; cursor: pointer; transition: all 100ms;
+    display: flex; align-items: center; gap: 4px;
+    font-size: 9px; font-weight: 600; color: var(--fg-4);
+    border: 1px solid transparent; border-radius: 4px; padding: 2px 6px;
+    background: none; cursor: pointer; transition: all 100ms; opacity: 0;
   }
-  .idea-archive:hover { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+  .idea-card:hover .idea-archive { opacity: 1; }
+  .idea-archive:hover {
+    background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.3);
+    color: #4ade80;
+  }
 
   /* Edit Modal */
   .edit-modal { width: 460px; max-height: 80vh; overflow-y: auto; }
@@ -427,5 +498,41 @@
   .form-error {
     padding: 7px 10px; background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
     border-radius: var(--r); font-size: 11px; color: #ef4444;
+  }
+
+  /* ── Archived section ── */
+  .archived-section {
+    margin-top: 20px; border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden;
+  }
+  .archived-section-hdr {
+    display: flex; align-items: center; gap: 8px; padding: 9px 14px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 700; color: var(--fg-3);
+  }
+  .archived-section-count {
+    font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 99px;
+    background: var(--surface-2); color: var(--fg-4);
+  }
+  .archived-list {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px;
+  }
+  .archived-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; border-radius: var(--r-lg);
+    border: 1px solid var(--border); background: var(--bg);
+    max-width: 280px;
+  }
+  .arch-chip-title {
+    font-size: 11px; font-weight: 500; color: var(--fg-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+  }
+  .arch-restore-btn {
+    display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+    font-size: 10px; font-weight: 600; color: var(--fg-4);
+    background: none; border: 1px solid transparent; border-radius: 4px;
+    padding: 2px 7px; cursor: pointer; transition: all 100ms;
+  }
+  .arch-restore-btn:hover {
+    background: rgba(99,102,241,.08); border-color: rgba(99,102,241,.3); color: #818cf8;
   }
 </style>

@@ -9,23 +9,91 @@
     items,
     aiConversationId,
     aiMessages,
+    isLocked,
+    dueReminders,
   } from "../stores/app";
-  import {
-    getSetting,
-    setSetting,
-    listMembers,
-    listItems,
-    createMember,
-    deleteMember,
-    listProjects,
-    createProject,
-    createItem,
-    createTask,
-    resetAppData,
+  import { getSetting, setSetting, listMembers, listItems,
+    createMember, deleteMember, listProjects, createProject,
+    createItem, createTask, resetAppData, listReminders, deleteReminder,
   } from "../api";
+  import type { Reminder } from "../types";
   import { FOLLOWUP_TAGS } from "../types";
+  import { TUNES, playTune } from "../tunes";
+  import type { TuneId } from "../tunes";
+  import { currentUser } from "../stores/app";
+  import { tryBiometricAuth } from "../api";
 
-  let activeTab: "ai" | "team" | "config" | "data" = "ai";
+  let activeTab: "ai" | "team" | "config" | "security" | "data" = "ai";
+
+  // Scheduled reminders
+  let scheduledReminders: Reminder[] = [];
+  let remindersLoading = false;
+  async function loadScheduledReminders() {
+    remindersLoading = true;
+    try { scheduledReminders = await listReminders(); } catch {}
+    remindersLoading = false;
+  }
+  async function handleDeleteReminder(id: string) {
+    await deleteReminder(id).catch(() => {});
+    scheduledReminders = scheduledReminders.filter(r => r.id !== id);
+  }
+  $: if (activeTab === 'config') loadScheduledReminders();
+
+  // Security tab
+  let lockEnabled = true;
+  let lockMode = "sleep"; // "sleep" | "never"
+  let currentPassword = "";
+  let newPassword = "";
+  let confirmNewPassword = "";
+  let changingPassword = false;
+  let passwordChangeErr = "";
+  let passwordChangeOk = false;
+  let testingBio = false;
+  let bioResult = "";
+
+  async function hashPassword(pw: string): Promise<string> {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function saveLockSettings() {
+    await setSetting("lock_enabled", lockEnabled ? "true" : "false");
+    await setSetting("lock_mode", lockMode);
+    addToast("Security settings saved", "\u2713");
+  }
+
+  async function changePassword() {
+    passwordChangeErr = ""; passwordChangeOk = false;
+    if (newPassword.length < 4) { passwordChangeErr = "New password must be at least 4 characters."; return; }
+    if (newPassword !== confirmNewPassword) { passwordChangeErr = "Passwords do not match."; return; }
+    changingPassword = true;
+    try {
+      const stored = await getSetting("user_password_hash").catch(() => null);
+      if (stored) {
+        const curHash = await hashPassword(currentPassword);
+        if (curHash !== stored) { passwordChangeErr = "Current password is incorrect."; return; }
+      }
+      const newHash = await hashPassword(newPassword);
+      await setSetting("user_password_hash", newHash);
+      currentPassword = ""; newPassword = ""; confirmNewPassword = "";
+      passwordChangeOk = true;
+      setTimeout(() => { passwordChangeOk = false; }, 3000);
+    } finally { changingPassword = false; }
+  }
+
+  async function testBiometrics() {
+    testingBio = true; bioResult = "";
+    try {
+      const r = await tryBiometricAuth();
+      bioResult = r === "ok" ? "Touch ID succeeded" : r === "unavailable" ? "Touch ID not available on this device" : "Touch ID failed";
+    } catch { bioResult = "Could not start biometric auth"; }
+    testingBio = false;
+  }
+
+  async function loadLockSettings() {
+    lockEnabled = (await getSetting("lock_enabled").catch(() => null)) !== "false";
+    lockMode = (await getSetting("lock_mode").catch(() => null)) || "sleep";
+  }
 
   let aiProvider = "openai";
   let aiApiKey = "";
@@ -486,6 +554,7 @@
     } catch {}
 
     loading = false;
+    loadLockSettings();
   });
 </script>
 
@@ -498,6 +567,7 @@
   <button class="tab" class:active={activeTab === "ai"} on:click={() => activeTab = "ai"}>AI Assistant</button>
   <button class="tab" class:active={activeTab === "team"} on:click={() => activeTab = "team"}>Team</button>
   <button class="tab" class:active={activeTab === "config"} on:click={() => activeTab = "config"}>Config</button>
+  <button class="tab" class:active={activeTab === "security"} on:click={() => activeTab = "security"}>Security</button>
   <button class="tab" class:active={activeTab === "data"} on:click={() => activeTab = "data"}>Data</button>
 </div>
 
@@ -651,6 +721,135 @@
     </div>
     <button class="btn btn-primary" on:click={saveAttentionRules}>Save Rules</button>
   </div>
+
+  <div class="settings-section">
+    <h3 class="section-title">Scheduled Reminders</h3>
+    <p class="section-desc">All active reminders across your issues and follow-ups.</p>
+    {#if remindersLoading}
+      <div class="empty-hint">Loading…</div>
+    {:else if scheduledReminders.length === 0}
+      <div class="empty-hint">No reminders scheduled.</div>
+    {:else}
+      <div class="reminder-list">
+        {#each scheduledReminders as r (r.id)}
+          <div class="reminder-row">
+            <div class="reminder-info">
+              <div class="reminder-title">{r.item_title || '(no title)'}{#if r.label} <span class="reminder-label">· {r.label}</span>{/if}</div>
+              <div class="reminder-time">{new Date(r.due_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}{#if r.recurrence} · repeats{/if}</div>
+            </div>
+            <button class="btn-icon del-btn" on:click={() => handleDeleteReminder(r.id)} title="Delete reminder">✗</button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <button class="btn btn-ghost" style="margin-top:10px;font-size:11px;" on:click={loadScheduledReminders}>↺ Refresh</button>
+  </div>
+
+  <div class="settings-section">
+    <h3 class="section-title">Notification Tunes</h3>
+    <p class="section-desc">Preview each tune before setting it as your default reminder sound.</p>
+    <div class="tune-test-grid">
+      {#each TUNES as t}
+        <button class="tune-test-btn" on:click={() => playTune(t.id as TuneId)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tune-play-icon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          {t.name}
+        </button>
+      {/each}
+    </div>
+    <div style="margin-top:14px;">
+      <p class="section-desc" style="margin-bottom:8px;">Fire a test reminder notification to verify it appears correctly.</p>
+      <button class="btn btn-secondary" on:click={() => {
+        dueReminders.update(rs => [...rs, {
+          id: `test-${Date.now()}`,
+          item_id: '',
+          item_title: 'Test Reminder',
+          due_at: new Date().toISOString(),
+          recurrence: null,
+          completed: false,
+          snoozed_to: null,
+          tune: 'bell',
+          label: 'This is a test — your reminder notifications are working!',
+        }]);
+      }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:6px;"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        Fire test reminder
+      </button>
+    </div>
+  </div>
+  {/if}
+
+  {#if activeTab === "security"}
+  <div class="settings-section">
+    <h3 class="section-title">Session Lock</h3>
+    <p class="section-desc">Control when Ganymede should require authentication.</p>
+    <div class="rule-list">
+      <label class="rule-row">
+        <div class="rule-info">
+          <span class="rule-name">Enable lock screen</span>
+          <span class="rule-desc">Require your password (or Touch ID) when returning after the screen was locked</span>
+        </div>
+        <div class="toggle-wrap" style="margin-left:auto">
+          <input type="checkbox" bind:checked={lockEnabled} class="toggle-input" />
+          <span class="toggle-track" class:on={lockEnabled}></span>
+        </div>
+      </label>
+    </div>
+
+    <div class="setting-row" style="margin-top:12px">
+      <label class="setting-label">Lock behaviour</label>
+      <select bind:value={lockMode} class="setting-select">
+        <option value="sleep">Lock when screen sleeps / locks</option>
+        <option value="never">Never lock automatically</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-primary" on:click={saveLockSettings}>Save Security Settings</button>
+      <button class="btn btn-ghost" on:click={() => isLocked.set(true)}
+        style="display:flex;align-items:center;gap:6px">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+        Lock Now
+      </button>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3 class="section-title">Change Password</h3>
+    {#if passwordChangeErr}
+      <div class="form-error">{passwordChangeErr}</div>
+    {/if}
+    {#if passwordChangeOk}
+      <div class="form-ok">Password changed successfully.</div>
+    {/if}
+    <div class="setting-row">
+      <label class="setting-label">Current password</label>
+      <input type="password" bind:value={currentPassword} class="setting-input" placeholder="Current password" />
+    </div>
+    <div class="setting-row">
+      <label class="setting-label">New password</label>
+      <input type="password" bind:value={newPassword} class="setting-input" placeholder="At least 4 characters" />
+    </div>
+    <div class="setting-row">
+      <label class="setting-label">Confirm new password</label>
+      <input type="password" bind:value={confirmNewPassword} class="setting-input" placeholder="Re-enter new password" on:keydown={(e) => e.key === 'Enter' && changePassword()} />
+    </div>
+    <button class="btn btn-primary" on:click={changePassword} disabled={changingPassword}>
+      {changingPassword ? "Updating…" : "Change Password"}
+    </button>
+  </div>
+
+  <div class="settings-section">
+    <h3 class="section-title">Touch ID / Biometrics</h3>
+    <p class="section-desc">Test if Touch ID is available and working on this device.</p>
+    {#if bioResult}
+      <div class="provider-info" style="margin-bottom:10px">{bioResult}</div>
+    {/if}
+    <button class="btn btn-primary" on:click={testBiometrics} disabled={testingBio}>
+      {testingBio ? "Testing…" : "Test Touch ID"}
+    </button>
+  </div>
   {/if}
 
   {#if activeTab === "data"}
@@ -783,6 +982,18 @@
 
   .add-member-row { display: flex; gap: 6px; align-items: center; }
 
+  /* Scheduled reminders */
+  .reminder-list { display: flex; flex-direction: column; gap: 0; }
+  .reminder-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid var(--border);
+  }
+  .reminder-row:last-child { border-bottom: none; }
+  .reminder-info { flex: 1; min-width: 0; }
+  .reminder-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reminder-label { font-weight: 400; color: var(--fg-3); }
+  .reminder-time { font-size: 10.5px; color: var(--orange); margin-top: 2px; font-weight: 600; }
+
   /* Tabs */
   .tabs-bar {
     display: flex; gap: 2px; margin-bottom: 16px;
@@ -873,4 +1084,43 @@
     background: #fee2e2; color: #dc2626; font-size: 12px; font-weight: 700; cursor: pointer;
   }
   .btn-danger:disabled { opacity: .6; cursor: wait; }
+
+  /* Tune test */
+  .tune-test-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tune-test-btn {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 14px; border-radius: var(--r);
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--fg-3); font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: all 120ms;
+  }
+  .tune-test-btn:hover { border-color: var(--orange); color: var(--orange); background: rgba(249,115,22,.06); }
+  .tune-play-icon { flex-shrink: 0; }
+
+  /* Security tab toggle */
+  .toggle-wrap { position: relative; flex-shrink: 0; }
+  .toggle-input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    display: block; width: 36px; height: 20px; border-radius: 10px;
+    background: var(--surface-3); border: 1px solid var(--border);
+    position: relative; cursor: pointer; transition: background 180ms;
+  }
+  .toggle-track::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 7px;
+    background: var(--fg-4); transition: transform 180ms, background 180ms;
+  }
+  .toggle-track.on { background: var(--orange); border-color: var(--orange); }
+  .toggle-track.on::after { transform: translateX(16px); background: #fff; }
+
+  .form-error {
+    font-size: 12px; color: var(--p0);
+    background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
+    border-radius: var(--r); padding: 8px 12px; margin-bottom: 10px;
+  }
+  .form-ok {
+    font-size: 12px; color: var(--green);
+    background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.25);
+    border-radius: var(--r); padding: 8px 12px; margin-bottom: 10px;
+  }
 </style>

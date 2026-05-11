@@ -186,6 +186,9 @@ impl Database {
         // Safe column additions for existing databases
         conn.execute("ALTER TABLE projects ADD COLUMN owner_id TEXT", []).ok();
         conn.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''", []).ok();
+        conn.execute("ALTER TABLE items ADD COLUMN category TEXT NOT NULL DEFAULT ''", []).ok();
+        conn.execute("ALTER TABLE reminders ADD COLUMN tune TEXT NOT NULL DEFAULT 'bell'", []).ok();
+        conn.execute("ALTER TABLE reminders ADD COLUMN label TEXT NOT NULL DEFAULT ''", []).ok();
         Ok(())
     }
 }

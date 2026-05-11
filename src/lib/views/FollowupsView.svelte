@@ -1,14 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { items, members, projects, addToast } from "../stores/app";
+  import { items, members, projects, followupCategories, addToast } from "../stores/app";
   import { listItems, listMembers, listProjects, createItem, updateItem, deleteItem } from "../api";
-  import type { Item } from "../types";
+  import type { Item, Status } from "../types";
+  import ReminderDialog from "../components/ReminderDialog.svelte";
 
   let showCreate = false;
   let showResolved = false;
   let editingItem: Item | null = null;
   let filterQuery = "";
   let deleteConfirmId: string | null = null;
+  let reminderItem: Item | null = null;
 
   // Create form
   let newTitle = "";
@@ -17,6 +19,7 @@
   let newAssignee = "";
   let newDueAt = "";
   let newBody = "";
+  let newCategory = "";
   let formError = "";
 
   // Edit form
@@ -27,6 +30,7 @@
   let editAssignee = "";
   let editDueAt = "";
   let editBody = "";
+  let editCategory = "";
   let editError = "";
 
   onMount(async () => {
@@ -68,6 +72,11 @@
     return true;
   });
 
+  $: pendingMeFollowups     = allFollowups.filter(i => i.status === "pending_me");
+  $: activeFiltFollowups    = filteredFollowups.filter(i => i.status !== "pending_me");
+  $: highPriorityFollowups  = activeFiltFollowups.filter(i => i.priority === "p0" || i.priority === "p1");
+  $: normalFollowups        = activeFiltFollowups.filter(i => i.priority === "p2" || i.priority === "p3");
+
   $: resolvedFollowups = $items
     .filter(i => i.type === "followup" && i.status === "done")
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -90,9 +99,10 @@
       due_at: newDueAt || undefined,
       body: newBody.trim() || undefined,
       project_id: newProjectId,
+      category: newCategory || undefined,
     });
     items.update(list => [created, ...list]);
-    newTitle = ""; newProjectId = ""; newPriority = "p2"; newAssignee = ""; newDueAt = ""; newBody = "";
+    newTitle = ""; newProjectId = ""; newPriority = "p2"; newAssignee = ""; newDueAt = ""; newBody = ""; newCategory = "";
     showCreate = false;
     addToast(`Follow-up created: "${created.title.slice(0, 40)}"`, "✓");
   }
@@ -106,6 +116,7 @@
     editAssignee  = item.assignee || "";
     editDueAt     = item.due_at || "";
     editBody      = item.body || "";
+    editCategory  = item.category || "";
     editError     = "";
   }
 
@@ -123,6 +134,7 @@
       assignee: editAssignee.trim() || undefined,
       due_at: editDueAt || undefined,
       body: editBody.trim() || undefined,
+      category: editCategory || undefined,
     });
     items.update(list => list.map(i => i.id === updated.id ? { ...updated, tags: i.tags, project_name: i.project_name } : i));
     try { const it = await listItems({}); items.set(it); } catch {}
@@ -134,6 +146,12 @@
     await updateItem({ id: item.id, status: "done" });
     items.update(list => list.map(i => i.id === item.id ? { ...i, status: "done" as const } : i));
     addToast(`Resolved: "${item.title.slice(0, 40)}"`, "✓");
+  }
+  async function togglePendingMe(item: Item) {
+    const next: Status = item.status === "pending_me" ? "open" : "pending_me";
+    await updateItem({ id: item.id, status: next });
+    items.update(list => list.map(i => i.id === item.id ? { ...i, status: next } : i));
+    addToast(next === "pending_me" ? `Pinned to Pending on Me` : `Unpinned from Pending on Me`, "⬡");
   }
 
   async function reopen(item: Item) {
@@ -168,7 +186,7 @@
     <input
       class="filter-input"
       bind:value={filterQuery}
-      placeholder="Filter by priority (p1), status (blocked), project, person…"
+      placeholder="Filter by priority (P0 P1), status (blocked), project, person…"
     />
     {#if hasFilter}
       <button class="filter-clear" on:click={() => { filterQuery = ""; deleteConfirmId = null; }}>✕</button>
@@ -231,12 +249,98 @@
         <label class="field-label">Notes</label>
         <textarea bind:value={newBody} class="field-textarea" rows="2" placeholder="Context, links, who to contact…"></textarea>
       </div>
+      {#if $followupCategories.length > 0}
+      <div class="cg-cell">
+        <label class="field-label">Category</label>
+        <div class="pill-row">
+          <button class="pill-btn" class:active={newCategory === ""} on:click={() => newCategory = ""}>None</button>
+          {#each $followupCategories as cat}
+            <button
+              class="pill-btn cat-pill"
+              class:active={newCategory === cat.value}
+              style={newCategory === cat.value ? `border-color:${cat.color};color:${cat.color};background:${cat.color}18` : ""}
+              on:click={() => newCategory = newCategory === cat.value ? "" : cat.value}
+            >{cat.label}</button>
+          {/each}
+        </div>
+      </div>
+      {/if}
     </div>
     <div class="create-actions">
       <button class="btn btn-ghost" on:click={() => { showCreate = false; formError = ""; }}>Cancel</button>
       <button class="btn btn-primary" on:click={handleCreate}>Create Follow-up</button>
     </div>
   </div>
+{/if}
+
+{#if highPriorityFollowups.length > 0}
+<div class="section-row high-section">
+  <span class="section-dot"></span>
+  <span class="section-lbl">Critical &amp; High Priority</span>
+  <span class="section-count">{highPriorityFollowups.length}</span>
+</div>
+<div class="fu-table">
+  <div class="table-head">
+    <span>Priority</span>
+    <span class="col-title">Follow-up</span>
+    <span>Project</span>
+    <span>Status</span>
+    <span>Assigned</span>
+    <span>Due</span>
+    <span>Age</span>
+    <span></span>
+  </div>
+  {#each highPriorityFollowups as item (item.id)}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+      class="table-row hp-row"
+      class:overdue={isOverdue(item)}
+      class:confirm-pending={deleteConfirmId === item.id}
+      on:click={() => openEdit(item)}
+      role="row" tabindex="0"
+      on:keydown={(e) => e.key === 'Enter' && openEdit(item)}
+    >
+      <span class="prio-badge {item.priority}">{item.priority.toUpperCase()}</span>
+      <span class="col-title row-title">
+        {item.title}
+        {#if item.category}<span class="cat-tag" style="border-color:{$followupCategories.find(c=>c.value===item.category)?.color||'var(--border)'};color:{$followupCategories.find(c=>c.value===item.category)?.color||'var(--fg-3)'}">{$followupCategories.find(c=>c.value===item.category)?.label||item.category}</span>{/if}
+      </span>
+      <span class="row-proj" class:missing={!item.project_name}>{item.project_name || "No project"}</span>
+      <span class="status-pill {item.status}">{item.status.replace("_"," ")}</span>
+      <span class="row-meta">{item.assignee || "—"}</span>
+      <span class="row-meta" class:overdue-txt={isOverdue(item)}>
+        {item.due_at ? fmtDate(item.due_at) : "—"}
+        {#if isOverdue(item)}<span class="overdue-badge">Overdue</span>{/if}
+      </span>
+      <span class="row-age">{daysLabel(daysSince(item.created_at))}</span>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <span class="row-actions" on:click|stopPropagation role="group">
+        <button class="remind-btn" on:click|stopPropagation={() => reminderItem = item} title="Set reminder"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
+        <button class="pin-me-btn" class:active={item.status === 'pending_me'} on:click|stopPropagation={() => togglePendingMe(item)} title={item.status === 'pending_me' ? 'Unpin from Pending on Me' : 'Mark as Pending on Me'}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+        <button class="resolve-btn" on:click|stopPropagation={() => markDone(item)} title="Resolve">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        {#if deleteConfirmId === item.id}
+          <button class="del-confirm" on:click={(e) => handleDelete(e, item)}>Delete?</button>
+          <button class="del-cancel" on:click|stopPropagation={() => deleteConfirmId = null}>✕</button>
+        {:else}
+          <button class="del-btn" on:click={(e) => handleDelete(e, item)} title="Delete">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        {/if}
+      </span>
+    </div>
+  {/each}
+</div>
+{/if}
+
+{#if normalFollowups.length > 0 || highPriorityFollowups.length > 0}
+<div class="section-row normal-section">
+  <span class="section-lbl">Standard Priority</span>
+  {#if normalFollowups.length > 0}<span class="section-count">{normalFollowups.length}</span>{/if}
+</div>
 {/if}
 
 <div class="fu-table">
@@ -251,7 +355,7 @@
     <span></span>
   </div>
 
-  {#each filteredFollowups as item (item.id)}
+  {#each normalFollowups as item (item.id)}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
       class="table-row"
@@ -263,7 +367,10 @@
       on:keydown={(e) => e.key === 'Enter' && openEdit(item)}
     >
       <span class="prio-badge {item.priority}">{item.priority.toUpperCase()}</span>
-      <span class="col-title row-title">{item.title}</span>
+      <span class="col-title row-title">
+        {item.title}
+        {#if item.category}<span class="cat-tag" style="border-color:{$followupCategories.find(c=>c.value===item.category)?.color||'var(--border)'};color:{$followupCategories.find(c=>c.value===item.category)?.color||'var(--fg-3)'}">{$followupCategories.find(c=>c.value===item.category)?.label||item.category}</span>{/if}
+      </span>
       <span class="row-proj" class:missing={!item.project_name}>{item.project_name || "No project"}</span>
       <span class="status-pill {item.status}">{item.status.replace("_"," ")}</span>
       <span class="row-meta">{item.assignee || "—"}</span>
@@ -274,6 +381,10 @@
       <span class="row-age">{daysLabel(daysSince(item.created_at))}</span>
       <!-- svelte-ignore a11y-click-events-have-key-events -->
       <span class="row-actions" on:click|stopPropagation role="group">
+        <button class="remind-btn" on:click|stopPropagation={() => reminderItem = item} title="Set reminder"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
+        <button class="pin-me-btn" class:active={item.status === 'pending_me'} on:click|stopPropagation={() => togglePendingMe(item)} title={item.status === 'pending_me' ? 'Unpin from Pending on Me' : 'Mark as Pending on Me'}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
         <button class="resolve-btn" on:click|stopPropagation={() => markDone(item)} title="Resolve">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
@@ -289,10 +400,66 @@
     </div>
   {:else}
     <div class="table-empty">
-      {#if hasFilter}No follow-ups match your filter{:else}No active follow-ups{/if}
+      {#if hasFilter}No follow-ups match your filter{:else}{highPriorityFollowups.length === 0 ? "No active follow-ups" : "No standard-priority follow-ups"}{/if}
     </div>
   {/each}
 </div>
+
+{#if pendingMeFollowups.length > 0}
+<div class="section-row pending-section">
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#6366f1;flex-shrink:0"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+  <span class="section-lbl pending-lbl">Pending on Me</span>
+  <span class="section-count pending-count">{pendingMeFollowups.length}</span>
+</div>
+<div class="followup-table">
+  <div class="table-head">
+    <span>Priority</span>
+    <span class="col-title">Follow-up</span>
+    <span>Project</span>
+    <span>Category</span>
+    <span>Assignee</span>
+    <span>Due</span>
+    <span>Age</span>
+    <span></span>
+  </div>
+  {#each pendingMeFollowups as item (item.id)}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <div
+      class="table-row pending-row"
+      class:confirm-pending={deleteConfirmId === item.id}
+      on:click={() => openEdit(item)}
+      role="row" tabindex="0"
+      on:keydown={(e) => e.key === 'Enter' && openEdit(item)}
+    >
+      <span class="prio-badge {item.priority}">{item.priority.toUpperCase()}</span>
+      <span class="col-title row-title">{item.title}</span>
+      <span class="row-proj" class:missing={!item.project_name}>{item.project_name || "No project"}</span>
+      <span class="row-meta">{item.category || "—"}</span>
+      <span class="row-meta">{item.assignee || "—"}</span>
+      <span class="row-meta" class:overdue={isOverdue(item)}>{item.due_at ? fmtDate(item.due_at) : "—"}</span>
+      <span class="row-age" class:old={daysSince(item.created_at) > 7}>{daysLabel(daysSince(item.created_at))}</span>
+      <!-- svelte-ignore a11y-click-events-have-key-events -->
+      <span class="row-actions" on:click|stopPropagation role="group">
+        <button class="remind-btn" on:click={(e) => openReminder(e, item)} title="Set reminder"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
+        <button class="pin-me-btn active" on:click|stopPropagation={() => togglePendingMe(item)} title="Unpin from Pending on Me">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+        <button class="resolve-btn" on:click|stopPropagation={() => markDone(item)} title="Resolve">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        {#if deleteConfirmId === item.id}
+          <button class="del-confirm" on:click={(e) => handleDelete(e, item)}>Delete?</button>
+          <button class="del-cancel" on:click|stopPropagation={() => deleteConfirmId = null}>✕</button>
+        {:else}
+          <button class="del-btn" on:click={(e) => handleDelete(e, item)} title="Delete">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        {/if}
+      </span>
+    </div>
+  {/each}
+</div>
+{/if}
 
 {#if resolvedFollowups.length > 0}
   <div class="resolved-section">
@@ -321,6 +488,8 @@
     {/if}
   </div>
 {/if}
+
+<svelte:window on:keydown={(e) => { if (e.key === 'Escape' && editingItem) { e.preventDefault(); editingItem = null; } }} />
 
 <!-- Edit modal -->
 {#if editingItem}
@@ -383,15 +552,40 @@
           <label class="field-label">Notes</label>
           <textarea bind:value={editBody} class="field-textarea" rows="3" placeholder="Context, links…"></textarea>
         </div>
+        {#if $followupCategories.length > 0}
+        <div class="field-col">
+          <label class="field-label">Category</label>
+          <div class="pill-row">
+            <button class="pill-btn" class:active={editCategory === ""} on:click={() => editCategory = ""}>None</button>
+            {#each $followupCategories as cat}
+              <button
+                class="pill-btn cat-pill"
+                class:active={editCategory === cat.value}
+                style={editCategory === cat.value ? `border-color:${cat.color};color:${cat.color};background:${cat.color}18` : ""}
+                on:click={() => editCategory = editCategory === cat.value ? "" : cat.value}
+              >{cat.label}</button>
+            {/each}
+          </div>
+        </div>
+        {/if}
       </div>
       <div class="modal-footer">
         <button class="btn btn-danger-ghost" on:click={async (e) => { if (editingItem) { await handleDelete(e, editingItem); editingItem = null; } }}>Delete</button>
+        <button class="btn btn-ghost remind-footer-btn" on:click={() => { const it = editingItem; editingItem = null; reminderItem = it; }} title="Set reminder"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>Remind</button>
         <div style="flex:1"></div>
         <button class="btn btn-ghost" on:click={() => editingItem = null}>Cancel</button>
         <button class="btn btn-primary" on:click={saveEdit}>Save</button>
       </div>
     </div>
   </div>
+{/if}
+
+{#if reminderItem}
+  <ReminderDialog
+    itemId={reminderItem.id}
+    itemTitle={reminderItem.title}
+    on:close={() => reminderItem = null}
+  />
 {/if}
 
 <style>
@@ -412,6 +606,39 @@
   .filter-input::placeholder { color: var(--fg-4); }
   .filter-clear { background: none; border: none; color: var(--fg-4); cursor: pointer; font-size: 11px; }
   .filter-clear:hover { color: var(--fg); }
+
+  /* Section rows */
+  .section-row { display: flex; align-items: center; gap: 7px; margin: 14px 0 6px; }
+  .section-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--p0); flex-shrink: 0; }
+  .section-lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-3); }
+  .high-section .section-lbl { color: var(--p0); }
+  .section-count { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 99px; }
+  .high-section .section-count { background: rgba(239,68,68,.12); color: var(--p0); }
+  .normal-section .section-count { background: var(--surface-2); color: var(--fg-4); }
+  .pending-lbl { color: #6366f1; }
+  .pending-count { background: rgba(99,102,241,.12); color: #6366f1; }
+
+  /* HP row accent */
+  .hp-row, .pending-row { position: relative; }
+  .hp-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--p0); }
+  .pending-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #6366f1; }
+  .fu-table { margin-top: 0; }
+
+  /* Category tag inline */
+  .cat-tag {
+    display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px;
+    border-radius: 3px; border: 1px solid; margin-left: 5px; vertical-align: middle; white-space: nowrap;
+  }
+
+  /* Remind button */
+  .remind-btn {
+    width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid var(--border); border-radius: 5px; font-size: 11px; cursor: pointer;
+    opacity: 0; transition: all 100ms;
+  }
+  .table-row:hover .remind-btn, .hp-row:hover .remind-btn { opacity: 1; }
+  .remind-btn:hover { background: rgba(249,115,22,.1); border-color: rgba(249,115,22,.4); }
+  .remind-footer-btn { font-size: 11px; }
 
   .token-row { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
   .token-pill { font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 99px; border: 1px solid; }
@@ -437,13 +664,13 @@
   .req { color: var(--p0); }
 
   /* ── Table ── */
-  .fu-table { border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
+  .fu-table { border: 1px solid rgba(249,115,22,.14); border-radius: var(--r-lg); overflow: hidden; }
 
   .table-head {
     display: grid; grid-template-columns: 52px 1fr 140px 100px 100px 110px 50px 90px;
-    background: var(--surface-2); padding: 7px 12px; gap: 10px;
-    font-size: 10px; font-weight: 700; color: var(--fg-4); text-transform: uppercase; letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--border);
+    background: rgba(249,115,22,.05); padding: 7px 12px; gap: 10px;
+    font-size: 10px; font-weight: 700; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.04em;
+    border-bottom: 1px solid rgba(249,115,22,.12);
   }
 
   .table-row {
@@ -453,7 +680,7 @@
     transition: background 100ms;
   }
   .table-row:last-child { border-bottom: none; }
-  .table-row:hover { background: var(--surface-2); }
+  .table-row:hover { background: rgba(249,115,22,.04); }
   .table-row.overdue { border-left: 3px solid var(--p0); }
   .table-row.confirm-pending { background: rgba(239,68,68,.04); }
 
@@ -479,6 +706,7 @@
   .status-pill.blocked     { background: rgba(239,68,68,.1); color: var(--p0); border-color: rgba(239,68,68,.25); }
   .status-pill.waiting     { background: rgba(245,158,11,.1); color: var(--p1); border-color: rgba(245,158,11,.25); }
   .status-pill.snoozed     { background: var(--surface-2); color: var(--fg-4); border-color: var(--border); }
+  .status-pill.pending_me  { background: rgba(99,102,241,.1); color: #6366f1; border-color: rgba(99,102,241,.25); }
 
   .row-actions { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
   .resolve-btn {
@@ -486,6 +714,14 @@
     background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--fg-4); cursor: pointer; transition: all 100ms;
   }
   .resolve-btn:hover { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+  .pin-me-btn {
+    width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--fg-4); cursor: pointer;
+    transition: all 100ms; opacity: 0;
+  }
+  .table-row:hover .pin-me-btn, .hp-row:hover .pin-me-btn { opacity: 1; }
+  .pin-me-btn:hover { background: rgba(99,102,241,.1); border-color: rgba(99,102,241,.4); color: #6366f1; }
+  .pin-me-btn.active { opacity: 1; background: rgba(99,102,241,.15); border-color: rgba(99,102,241,.5); color: #6366f1; }
   .del-btn {
     width: 22px; height: 22px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
     background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--fg-4); cursor: pointer;

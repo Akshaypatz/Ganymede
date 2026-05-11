@@ -1,7 +1,10 @@
 pub mod ai;
+pub mod auth;
+pub mod checkin;
 pub mod commands;
 pub mod db;
 pub mod models;
+pub mod reminders;
 
 use db::Database;
 use tauri::Manager;
@@ -52,6 +55,7 @@ pub fn run() {
             commands::delete_member,
             commands::list_tasks,
             commands::list_blocked_tasks,
+            commands::list_pending_me_tasks,
             commands::create_task,
             commands::update_task,
             commands::delete_task,
@@ -59,6 +63,15 @@ pub fn run() {
             ai::apply_ai_action,
             ai::list_ai_conversations,
             ai::get_ai_messages,
+            checkin::get_checkin_report,
+            checkin::snooze_checkin_item,
+            reminders::create_reminder,
+            reminders::list_reminders,
+            reminders::get_due_reminders,
+            reminders::complete_reminder,
+            reminders::snooze_reminder,
+            reminders::delete_reminder,
+            auth::try_biometric_auth,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ganymede");

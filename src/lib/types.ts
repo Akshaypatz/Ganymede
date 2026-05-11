@@ -41,7 +41,7 @@ export interface UpdateProject {
 // ─── Items ──────────────────────────────────────────
 export type ItemType = "issue" | "followup" | "note" | "decision" | "waiting" | "idea" | "initiative";
 export type Priority = "p0" | "p1" | "p2" | "p3";
-export type Status = "open" | "in_progress" | "blocked" | "waiting" | "done" | "snoozed" | "brainstorm" | "exploring" | "planned" | "ready";
+export type Status = "open" | "in_progress" | "blocked" | "waiting" | "done" | "snoozed" | "brainstorm" | "exploring" | "planned" | "ready" | "pending_me";
 
 // Follow-up tag categories
 export type FollowupTag = "vapt" | "sca" | "bank_dependency" | "network_issue" | "infra" | "compliance" | "other";
@@ -67,6 +67,7 @@ export interface Item {
   due_at: string | null;
   created_at: string;
   updated_at: string;
+  category: string;
   tags: Tag[];
   project_name: string | null;
 }
@@ -81,6 +82,7 @@ export interface CreateItem {
   assignee?: string;
   due_at?: string;
   tag_ids?: string[];
+  category?: string;
 }
 
 export interface UpdateItem {
@@ -94,6 +96,7 @@ export interface UpdateItem {
   assignee?: string;
   due_at?: string;
   tag_ids?: string[];
+  category?: string;
 }
 
 // ─── Tags ───────────────────────────────────────────
@@ -108,6 +111,19 @@ export interface CreateTag {
   name: string;
   color?: string;
   category?: string;
+}
+
+// ─── Reminders ─────────────────────────────────────
+export interface Reminder {
+  id: string;
+  item_id: string;
+  item_title: string;
+  due_at: string;
+  recurrence: string | null;
+  completed: boolean;
+  snoozed_to: string | null;
+  tune: string;
+  label: string;
 }
 
 // ─── Boards ─────────────────────────────────────────
@@ -181,7 +197,40 @@ export interface DashboardStats {
   total_projects: number;
 }
 
-// ─── Views ──────────────────────────────────────────
+// ─── Check-in Engine ────────────────────────────────
+export interface CheckinItem {
+  id: string;
+  title: string;
+  item_type: string;
+  priority: string;
+  status: string;
+  assignee: string;
+  project_name: string;
+  due_at: string | null;
+  updated_at: string;
+  age_days: number;
+  reason: "overdue" | "stale" | "blocked" | "due_soon" | "pending_me";
+}
+
+export interface CheckinProject {
+  id: string;
+  name: string;
+  health: string;
+  stage: string;
+  last_activity_days: number;
+}
+
+export interface CheckinReport {
+  overdue: CheckinItem[];
+  stale: CheckinItem[];
+  blocked: CheckinItem[];
+  due_soon: CheckinItem[];
+  pending_me: CheckinItem[];
+  at_risk_projects: CheckinProject[];
+  total_attention: number;
+  generated_at: string;
+}
+
 export type ViewId =
   | "dashboard"
   | "issues"
@@ -194,7 +243,9 @@ export type ViewId =
   | "today"
   | "week"
   | "ai"
-  | "settings";
+  | "checkin"
+  | "settings"
+  | "pending_on_me";
 
 // ─── Members ────────────────────────────────────────
 export interface Member {
@@ -219,7 +270,7 @@ export interface UpdateMember {
 }
 
 // ─── Tasks ──────────────────────────────────────────
-export type TaskStatus = "todo" | "in_progress" | "review" | "blocked" | "done";
+export type TaskStatus = "todo" | "in_progress" | "review" | "blocked" | "done" | "pending_me";
 
 export interface Task {
   id: string;

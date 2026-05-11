@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import type { ViewId, Project, Item, Tag, Board, DashboardStats, ActivityEntry, Member, AiMessage } from "../types";
+import type { ViewId, Project, Item, Tag, Board, DashboardStats, ActivityEntry, Member, AiMessage, CheckinReport, Task, Reminder } from "../types";
 import { FOLLOWUP_TAGS } from "../types";
 
 // Active view
@@ -22,6 +22,8 @@ export const boards = writable<Board[]>([]);
 export const dashboardStats = writable<DashboardStats | null>(null);
 export const activityLog = writable<ActivityEntry[]>([]);
 export const members = writable<Member[]>([]);
+// Cross-entity pending-on-me tasks (kept in sync across ProjectDetailView & PendingOnMeView)
+export const pendingMeTasks = writable<Task[]>([]);
 
 // Modals
 export const showQuickAdd = writable(false);
@@ -51,6 +53,17 @@ export const attentionRules = writable({
 export const aiConversationId = writable<string | null>(null);
 export const aiMessages = writable<AiMessage[]>([]);
 export const aiLoading = writable(false);
+
+// Check-in report
+export const checkinReport = writable<CheckinReport | null>(null);
+
+// Auth / session
+export const isLocked = writable(false);
+export const currentUser = writable<{ name: string } | null>(null);
+export const showOnboarding = writable(false);
+
+// Due reminders (shared so SettingsView can inject test reminders)
+export const dueReminders = writable<Reminder[]>([]);
 
 // Toast messages
 export const toasts = writable<{ id: number; message: string; icon?: string }[]>([]);

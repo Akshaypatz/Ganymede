@@ -61,6 +61,8 @@ pub struct Item {
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
+    pub category: String,
+    #[serde(default)]
     pub tags: Vec<Tag>,
     #[serde(default)]
     pub project_name: Option<String>,
@@ -77,6 +79,7 @@ pub struct CreateItem {
     pub assignee: Option<String>,
     pub due_at: Option<String>,
     pub tag_ids: Option<Vec<String>>,
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +94,7 @@ pub struct UpdateItem {
     pub assignee: Option<String>,
     pub due_at: Option<String>,
     pub tag_ids: Option<Vec<String>>,
+    pub category: Option<String>,
 }
 
 // ─── Tags ───────────────────────────────────────────
@@ -107,6 +111,29 @@ pub struct CreateTag {
     pub name: String,
     pub color: Option<String>,
     pub category: Option<String>,
+}
+
+// ─── Reminders ─────────────────────────────────────
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Reminder {
+    pub id: String,
+    pub item_id: String,
+    pub item_title: String,
+    pub due_at: String,
+    pub recurrence: Option<String>,
+    pub completed: bool,
+    pub snoozed_to: Option<String>,
+    pub tune: String,
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateReminder {
+    pub item_id: String,
+    pub due_at: String,
+    pub tune: Option<String>,
+    pub label: Option<String>,
+    pub recurrence: Option<String>,
 }
 
 // ─── Boards ─────────────────────────────────────────

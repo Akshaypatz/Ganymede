@@ -5,10 +5,15 @@
     boards,
     items,
     activeBoardId,
+    checkinReport,
+    currentUser,
+    isLocked,
+    pendingMeTasks,
   } from "./stores/app";
   import { listBoards, listItems } from "./api";
   import { onMount } from "svelte";
   import type { ViewId } from "./types";
+  import GanymedeMark from "./components/GanymedeMark.svelte";
 
   let boardList: { id: string; name: string }[] = [];
 
@@ -37,6 +42,11 @@
   $: followupCount = $items.filter((i) => i.type === "followup" && i.status !== "done").length;
   $: ideaCount = $items.filter((i) => i.type === "idea" && i.status !== "done").length;
   $: initiativeCount = $items.filter((i) => i.type === "initiative" && i.status !== "done").length;
+  $: pendingOnMeCount = $items.filter((i) => i.status === "pending_me").length + $pendingMeTasks.length;
+  $: userName = $currentUser?.name ?? "";
+  $: initials = userName
+    ? userName.trim().split(/\s+/).map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
+    : "?";
 </script>
 
 <nav class="sidebar" class:collapsed={$sidebarCollapsed}>
@@ -79,6 +89,18 @@
       {#if !$sidebarCollapsed}
         <span class="nav-label">Follow-ups</span>
         {#if followupCount > 0}<span class="nav-count">{followupCount}</span>{/if}
+      {/if}
+    </button>
+
+    <button
+      class="nav-item"
+      class:active={$activeView === "pending_on_me"}
+      on:click={() => switchView("pending_on_me")}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:{$activeView === 'pending_on_me' ? '#818cf8' : 'currentColor'}"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      {#if !$sidebarCollapsed}
+        <span class="nav-label" style="color:{$activeView === 'pending_on_me' ? '#818cf8' : ''}">Pending on Me</span>
+        {#if pendingOnMeCount > 0}<span class="nav-count pom">{pendingOnMeCount}</span>{/if}
       {/if}
     </button>
 
@@ -131,10 +153,23 @@
     {#if !$sidebarCollapsed}<div class="section-label">AI & Settings</div>{/if}
     <button
       class="nav-item"
+      class:active={$activeView === 'checkin'}
+      on:click={() => switchView('checkin')}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+      {#if !$sidebarCollapsed}
+        <span class="nav-label">Daily Brief</span>
+        {#if ($checkinReport?.total_attention ?? 0) > 0}
+          <span class="nav-count urgent">{$checkinReport?.total_attention}</span>
+        {/if}
+      {/if}
+    </button>
+    <button
+      class="nav-item"
       class:active={$activeView === 'ai'}
       on:click={() => switchView('ai')}
     >
-      <img src="/billdesk-logo.png" class="nav-bd-icon" alt="" />
+      <GanymedeMark size={13} />
       {#if !$sidebarCollapsed}<span class="nav-label">Ask Ganymede</span>{/if}
     </button>
     <button
@@ -149,8 +184,14 @@
 
   <div class="sidebar-footer">
     <div class="user-row">
-      <div class="avatar">AP</div>
-      {#if !$sidebarCollapsed}<span class="user-name">Akshay Patel</span>{/if}
+      <div class="avatar">{initials}</div>
+      {#if !$sidebarCollapsed}<span class="user-name">{userName || "Ganymede"}</span>{/if}
+      <button class="lock-btn" on:click={() => isLocked.set(true)} title="Lock screen (⌘L)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+      </button>
     </div>
   </div>
 </nav>
@@ -209,6 +250,7 @@
     padding: 0 4px; background: var(--orange-bg); color: var(--orange);
   }
   .nav-count.urgent { background: var(--p0-bg); color: var(--p0); }
+  .nav-count.pom { background: rgba(99,102,241,.15); color: #818cf8; }
   .sidebar-footer { padding: 8px 6px; border-block-start: 1px solid var(--border); flex-shrink: 0; }
   .user-row {
     display: flex; align-items: center; gap: 8px; padding: 7px 10px;
@@ -221,7 +263,16 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 800; color: #fff;
   }
-  .user-name { font-size: 12px; font-weight: 500; color: var(--fg-2); }
+  .user-name { font-size: 12px; font-weight: 500; color: var(--fg-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lock-btn {
+    width: 24px; height: 24px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid transparent; border-radius: 6px;
+    color: var(--fg-4); cursor: pointer; transition: all 120ms;
+    margin-left: auto; opacity: 0;
+  }
+  .user-row:hover .lock-btn { opacity: 1; }
+  .lock-btn:hover { background: rgba(249,115,22,.1); border-color: rgba(249,115,22,.3); color: var(--orange); }
 
   .collapsed .nav-item { padding: 9px; justify-content: center; }
   .collapsed .nav-count { display: none; }
