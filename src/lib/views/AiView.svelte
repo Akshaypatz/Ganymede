@@ -15,6 +15,23 @@
   let conversations: AiConversation[] = [];
   let showHistory = false;
 
+  // Streaming animation
+  let streamStore: Record<string, string> = {};
+  let streamComplete = new Set<string>();
+
+  async function streamIn(id: string, fullText: string) {
+    streamStore = { ...streamStore, [id]: '' };
+    const CHUNK = 6;
+    for (let i = CHUNK; i <= fullText.length + CHUNK; i += CHUNK) {
+      streamStore = { ...streamStore, [id]: fullText.slice(0, Math.min(i, fullText.length)) };
+      scrollToBottom();
+      await new Promise<void>(r => requestAnimationFrame(() => r()));
+    }
+    streamComplete = new Set([...streamComplete, id]);
+    streamStore = { ...streamStore, [id]: fullText };
+    scrollToBottom();
+  }
+
   onMount(async () => {
     try {
       conversations = await listAiConversations();
@@ -65,10 +82,11 @@
         }
       }
 
-      aiMessages.update((msgs) => [
+      const msgId = `asst-${Date.now()}`;
+    aiMessages.update((msgs) => [
         ...msgs,
         {
-          id: `asst-${Date.now()}`,
+          id: msgId,
           conversation_id: response.conversation_id,
           role: "assistant" as const,
           content: response.message,
@@ -78,7 +96,7 @@
           created_at: new Date().toISOString(),
         },
       ]);
-      scrollToBottom();
+      streamIn(msgId, response.message);
 
       // Refresh stores
       if (applied.length > 0) {
@@ -213,7 +231,7 @@
       {#if $aiMessages.length === 0}
         <div class="ai-welcome">
           <div class="ai-welcome-icon" aria-hidden="true">
-            <span>GM</span>
+            <img src="/billdesk-logo.png" alt="" />
           </div>
           <h2>Plan Faster. Track Better.</h2>
           <p>Use natural language to create structured work: projects, issues, follow-ups, ideas, and decisions.</p>
@@ -237,15 +255,21 @@
           </div>
         </div>
       {:else}
-        {#each $aiMessages as msg, idx}
+        {#each $aiMessages as msg, idx (msg.id)}
           <div class="ai-msg" class:user={msg.role === 'user'} class:assistant={msg.role === 'assistant'}>
             {#if msg.role === 'assistant'}
-              <div class="ai-msg-avatar">AI</div>
+              <div class="ai-msg-avatar"><img src="/billdesk-logo.png" alt="" /></div>
             {/if}
             <div class="ai-msg-body">
-              <div class="ai-msg-content">{@html renderMarkdown(msg.content)}</div>
+              <div class="ai-msg-content">
+                {#if streamStore[msg.id] !== undefined && !streamComplete.has(msg.id)}
+                  {streamStore[msg.id]}<span class="stream-cursor">▌</span>
+                {:else}
+                  {@html renderMarkdown(msg.content)}
+                {/if}
+              </div>
 
-              {#if msg.applied_summary && msg.applied_summary.length > 0}
+              {#if msg.applied_summary && msg.applied_summary.length > 0 && (streamComplete.has(msg.id) || streamStore[msg.id] === undefined)}
                 <div class="ai-applied-list">
                   {#each msg.applied_summary as item}
                     <div class="ai-applied-item">
@@ -256,7 +280,7 @@
                 </div>
               {/if}
 
-              {#if msg.followups && msg.followups.length > 0}
+              {#if msg.followups && msg.followups.length > 0 && (streamComplete.has(msg.id) || streamStore[msg.id] === undefined)}
                 <div class="ai-followups">
                   {#each msg.followups as q}
                     <button class="ai-followup-btn" on:click={() => handleFollowup(q)}>
@@ -283,18 +307,20 @@
     </div>
 
     <div class="ai-input-area">
-      <textarea
-        bind:value={inputText}
-        placeholder="Describe the situation, desired outcome, and constraints..."
-        class="ai-input"
-        rows="3"
-        on:keydown={handleKeydown}
-      ></textarea>
-      <div class="ai-input-row">
-        <span class="ai-input-hint">Enter to send · Shift+Enter for newline</span>
-        <button class="ai-send" on:click={sendMessage} disabled={$aiLoading || !inputText.trim()}>
-          Send ↑
-        </button>
+      <div class="ai-input-wrapper">
+        <textarea
+          bind:value={inputText}
+          placeholder="Ask about your projects, issues, team, or what to do next…"
+          class="ai-input"
+          rows="3"
+          on:keydown={handleKeydown}
+        ></textarea>
+        <div class="ai-input-controls">
+          <span class="ai-input-hint">↵ send &nbsp;·&nbsp; ⇧↵ newline</span>
+          <button class="ai-send" on:click={sendMessage} disabled={$aiLoading || !inputText.trim()}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -393,17 +419,15 @@
     padding: 48px 24px;
   }
   .ai-welcome-icon {
-    width: 56px; height: 56px; border-radius: 16px;
-    background: linear-gradient(135deg, rgba(249,115,22,.18), rgba(59,130,246,.16));
-    border: 1px solid rgba(249,115,22,.35);
+    width: 64px; height: 64px; border-radius: 18px;
+    background: white;
+    border: 1px solid rgba(249,115,22,.2);
     display: flex; align-items: center; justify-content: center;
     margin: 0 auto 20px;
-    color: #f8fafc;
-    font-size: 15px;
-    font-weight: 800;
-    letter-spacing: .04em;
-    box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    padding: 10px;
   }
+  .ai-welcome-icon img { width: 100%; height: 100%; object-fit: contain; }
   .ai-welcome h2 { font-size: 26px; font-weight: 780; margin: 0 0 10px; color: var(--fg); letter-spacing: -0.03em; }
   .ai-welcome p { font-size: 13px; color: var(--fg-3); margin: 0; line-height: 1.6; }
 
@@ -427,12 +451,14 @@
   .ai-msg.user { justify-content: flex-end; }
   .ai-msg-avatar {
     width: 28px; height: 28px; border-radius: 8px;
-    background: linear-gradient(135deg, rgba(249,115,22,.22), rgba(59,130,246,.16));
-    color: #f8fafc;
+    background: white;
     display: flex; align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 800; flex-shrink: 0; margin-top: 2px;
+    flex-shrink: 0; margin-top: 2px;
     border: 1px solid rgba(249,115,22,.25);
+    padding: 3px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12);
   }
+  .ai-msg-avatar img { width: 100%; height: 100%; object-fit: contain; }
   .ai-msg-body { max-width: min(82%, 760px); }
   .ai-msg.user .ai-msg-body {
     background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
@@ -487,35 +513,57 @@
 
   /* ── Input ── */
   .ai-input-area {
-    padding: 18px 22px 22px;
+    padding: 14px 22px 20px;
     border-top: 1px solid var(--border);
     flex-shrink: 0;
     background: color-mix(in oklab, var(--surface) 88%, #111827 12%);
   }
-  .ai-input {
-    width: 100%; resize: none; background: color-mix(in oklab, var(--surface) 92%, #0b1220 8%);
-    border: 1px solid color-mix(in oklab, var(--border) 80%, #0f172a 20%); border-radius: 12px;
-    padding: 12px 14px; font-size: 13px; color: var(--fg);
-    font-family: inherit; line-height: 1.5; box-sizing: border-box;
+  .ai-input-wrapper {
+    background: color-mix(in oklab, var(--surface) 92%, #0b1220 8%);
+    border: 1.5px solid color-mix(in oklab, var(--border) 80%, #0f172a 20%);
+    border-radius: 14px;
+    padding: 12px 14px 10px;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: border-color 150ms, box-shadow 150ms;
   }
-  .ai-input:focus {
+  .ai-input-wrapper:focus-within {
     border-color: var(--orange);
-    outline: none;
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--orange-bg) 70%, transparent 30%);
+    box-shadow: 0 0 0 3px rgba(249,115,22,.1);
+  }
+  .ai-input {
+    width: 100%; resize: none; background: transparent;
+    border: none; outline: none;
+    padding: 0; font-size: 13px; color: var(--fg);
+    font-family: inherit; line-height: 1.55; box-sizing: border-box;
   }
   .ai-input::placeholder { color: var(--fg-4); }
-  .ai-input-row {
+  .ai-input-controls {
     display: flex; align-items: center; justify-content: space-between;
-    margin-top: 8px;
   }
-  .ai-input-hint { font-size: 10px; color: var(--fg-4); }
+  .ai-input-hint { font-size: 10px; color: var(--fg-4); letter-spacing: 0.01em; }
   .ai-send {
-    padding: 8px 18px; border-radius: 9px; background: linear-gradient(135deg, #fb923c 0%, #f97316 100%); color: #fff;
-    border: none; font-size: 12px; font-weight: 600; cursor: pointer;
-    transition: opacity 120ms; display: flex; align-items: center; gap: 4px;
+    width: 32px; height: 32px; border-radius: 10px;
+    background: linear-gradient(135deg, #fb923c 0%, #f97316 100%); color: #fff;
+    border: none; cursor: pointer;
+    transition: opacity 120ms; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
   }
-  .ai-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .ai-send:disabled { opacity: 0.35; cursor: not-allowed; }
   .ai-send:not(:disabled):hover { opacity: 0.88; }
+
+  /* Streaming cursor */
+  .stream-cursor {
+    display: inline-block; color: var(--orange);
+    animation: blink-cursor 0.7s steps(2, start) infinite;
+  }
+  @keyframes blink-cursor { 50% { opacity: 0; } }
+
+  /* Message entry animation */
+  @keyframes msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .ai-msg { animation: msg-in 0.22s ease; }
 
   @media (max-width: 980px) {
     .ai-sidebar.open { width: 190px; }

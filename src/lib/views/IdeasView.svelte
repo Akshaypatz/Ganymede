@@ -11,9 +11,12 @@
     { key: "ready", label: "Ready to Start", color: "#22c55e", bg: "rgba(34,197,94,.12)" },
   ];
 
-  let inlineAddStage = "";
-  let inlineTitle = "";
-  let inlineBody = "";
+  let showCreateModal = false;
+  let createStage = "brainstorm";
+  let createTitle = "";
+  let createBody = "";
+  let createWhy = "";
+  let createError = "";
   let editingItem: Item | null = null;
   let editTitle = "";
   let editBody = "";
@@ -33,12 +36,16 @@
     return acc;
   }, {} as Record<string, Item[]>);
 
-  async function handleInlineCreate(stageKey: string) {
-    if (!inlineTitle.trim()) return;
-    const title = inlineTitle.trim();
-    const body = inlineBody.trim();
-    inlineTitle = ""; inlineBody = ""; inlineAddStage = "";
-    const item = await createItem({ title, body, type: "idea", status: stageKey as any, priority: "p3" });
+  async function handleCreate() {
+    createError = "";
+    if (!createTitle.trim()) { createError = "Title is required."; return; }
+    const title = createTitle.trim();
+    const why = createWhy.trim();
+    const notes = createBody.trim();
+    const body = why ? `**Why:** ${why}${notes ? '\n\n' + notes : ''}` : notes;
+    showCreateModal = false;
+    createTitle = ""; createBody = ""; createWhy = "";
+    const item = await createItem({ title, body, type: "idea", status: createStage as any, priority: "p3" });
     items.update((list) => [item, ...list]);
     addToast(`Idea added: "${item.title.slice(0, 40)}"`, "✓");
   }
@@ -107,6 +114,8 @@
   }
 </script>
 
+<svelte:window on:keydown={(e) => { if (e.key === 'Escape') { editingItem = null; showCreateModal = false; } }} />
+
 <div class="page-header">
   <div class="page-hdr-row">
     <div>
@@ -130,7 +139,7 @@
         <button
           class="col-hdr-add"
           style="color:{stage.color}"
-          on:click|stopPropagation={() => { inlineAddStage = stage.key; inlineTitle = ''; inlineBody = ''; }}
+          on:click|stopPropagation={() => { showCreateModal = true; createStage = stage.key; createTitle = ''; createBody = ''; createWhy = ''; createError = ''; }}
           title="Add idea"
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -161,31 +170,8 @@
             </div>
           </div>
         {:else}
-          {#if inlineAddStage !== stage.key}
-            <div class="board-empty">Drop ideas here</div>
-          {/if}
+          <div class="board-empty">Drop here or click + to add</div>
         {/each}
-        {#if inlineAddStage === stage.key}
-          <div class="inline-create">
-            <input
-              bind:value={inlineTitle}
-              placeholder="What's the idea?"
-              class="inline-input"
-              autofocus
-              on:keydown={(e) => { if (e.key === 'Enter') handleInlineCreate(stage.key); if (e.key === 'Escape') { inlineAddStage = ''; inlineTitle = ''; inlineBody = ''; } }}
-            />
-            <textarea
-              bind:value={inlineBody}
-              placeholder="Context, links, or details… (optional)"
-              class="inline-textarea"
-              rows="2"
-            ></textarea>
-            <div class="inline-actions">
-              <button class="inline-add-btn" on:click={() => handleInlineCreate(stage.key)}>Add idea</button>
-              <button class="inline-cancel-btn" on:click={() => { inlineAddStage = ''; inlineTitle = ''; inlineBody = ''; }}>Cancel</button>
-            </div>
-          </div>
-        {/if}
       </div>
     </div>
   {/each}
@@ -223,6 +209,60 @@
       <div class="modal-footer">
         <button class="btn btn-ghost" on:click={() => (editingItem = null)}>Cancel</button>
         <button class="btn btn-primary" on:click={saveEdit}>Save</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Create Idea Modal -->
+{#if showCreateModal}
+  <div class="overlay" on:click|self={() => showCreateModal = false} role="dialog">
+    <div class="modal create-modal">
+      <div class="modal-header">
+        <div class="modal-header-left">
+          <span class="create-icon">💡</span>
+          <span class="modal-title">New Idea</span>
+        </div>
+        <button class="btn-icon" on:click={() => showCreateModal = false}>✕</button>
+      </div>
+      <div class="modal-body">
+        {#if createError}
+          <div class="form-error">{createError}</div>
+        {/if}
+        <input
+          bind:value={createTitle}
+          class="idea-create-title"
+          placeholder="What's the idea?"
+          autofocus
+          on:keydown={(e) => { if (e.key === 'Enter') handleCreate(); }}
+        />
+        <div class="field-col-group">
+          <div class="field-label">Stage</div>
+          <div class="stage-pill-group">
+            {#each stages as s}
+              <button
+                class="stage-choice-pill"
+                class:active={createStage === s.key}
+                style={createStage === s.key ? `background:${s.bg};border-color:${s.color};color:${s.color}` : ""}
+                on:click={() => createStage = s.key}
+              >{s.label}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="field-col-group">
+          <div class="field-label">Why this matters <span class="opt-hint">(optional)</span></div>
+          <input bind:value={createWhy} class="create-field-input" placeholder="The problem it solves or opportunity it unlocks…" />
+        </div>
+        <div class="field-col-group">
+          <div class="field-label">Notes</div>
+          <textarea bind:value={createBody} class="field-textarea" rows="3" placeholder="Context, links, related ideas, next steps…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer create-modal-footer">
+        <span class="create-hint">💬 A clear “why” helps turn ideas into initiatives</span>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost" on:click={() => showCreateModal = false}>Cancel</button>
+        <button class="btn btn-primary" on:click={handleCreate}>Add Idea</button>
       </div>
     </div>
   </div>
@@ -361,4 +401,31 @@
     border: 1px solid var(--border); background: none; color: var(--fg-3); cursor: pointer; transition: all 100ms;
   }
   .btn-sm.danger:hover { background: var(--p0-bg); border-color: var(--p0); color: var(--p0); }
+
+  /* Create Idea Modal */
+  .create-modal { width: 500px; max-height: 85vh; overflow-y: auto; }
+  .modal-header-left { display: flex; align-items: center; gap: 8px; }
+  .create-icon { font-size: 20px; line-height: 1; }
+  .opt-hint { font-size: 10px; color: var(--fg-4); font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 3px; }
+  .field-col-group { display: flex; flex-direction: column; gap: 6px; }
+  .idea-create-title {
+    width: 100%; padding: 10px 12px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--r-lg);
+    font-size: 15px; font-weight: 650; color: var(--fg); letter-spacing: -0.02em;
+    transition: border-color 120ms;
+  }
+  .idea-create-title:focus { border-color: var(--orange); outline: none; box-shadow: 0 0 0 3px rgba(249,115,22,.08); }
+  .idea-create-title::placeholder { color: var(--fg-4); font-weight: 400; }
+  .create-field-input {
+    padding: 8px 10px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--r);
+    font-size: 12px; color: var(--fg); width: 100%; font-family: inherit;
+  }
+  .create-field-input:focus { border-color: var(--orange); outline: none; }
+  .create-modal-footer { display: flex; align-items: center; gap: 8px; }
+  .create-hint { font-size: 11px; color: var(--fg-4); font-style: italic; }
+  .form-error {
+    padding: 7px 10px; background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
+    border-radius: var(--r); font-size: 11px; color: #ef4444;
+  }
 </style>

@@ -41,23 +41,7 @@
 
 <nav class="sidebar" class:collapsed={$sidebarCollapsed}>
   <div class="sidebar-header">
-    <!-- Hexagon ring logo: orange left, grey right -->
-    <svg class="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <clipPath id="hex-outer">
-          <polygon points="50,4.5 91.5,27.25 91.5,72.75 50,95.5 8.5,72.75 8.5,27.25"/>
-        </clipPath>
-        <clipPath id="hex-inner-clip">
-          <polygon points="50,23 73.9,36.5 73.9,63.5 50,77 26.1,63.5 26.1,36.5"/>
-        </clipPath>
-      </defs>
-      <!-- Orange left half -->
-      <rect x="0" y="0" width="50" height="100" fill="#f97316" clip-path="url(#hex-outer)"/>
-      <!-- Grey right half -->
-      <rect x="50" y="0" width="50" height="100" fill="#58585d" clip-path="url(#hex-outer)"/>
-      <!-- Cut out inner hexagon (white) -->
-      <polygon points="50,23 73.9,36.5 73.9,63.5 50,77 26.1,63.5 26.1,36.5" fill="white"/>
-    </svg>
+    <img src="/billdesk-logo.png" class="logo-mark" alt="BillDesk" />
     {#if !$sidebarCollapsed}
       <div class="logo-name">Ganymede <span>Mission Control</span></div>
     {/if}
@@ -150,7 +134,7 @@
       class:active={$activeView === 'ai'}
       on:click={() => switchView('ai')}
     >
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      <img src="/billdesk-logo.png" class="nav-bd-icon" alt="" />
       {#if !$sidebarCollapsed}<span class="nav-label">Ask Ganymede</span>{/if}
     </button>
     <button
@@ -194,8 +178,9 @@
     min-height: 52px;
   }
   .logo-mark {
-    width: 30px; height: 30px; flex-shrink: 0;
+    width: 30px; height: 30px; flex-shrink: 0; object-fit: contain;
   }
+  .nav-bd-icon { width: 14px; height: 14px; object-fit: contain; flex-shrink: 0; opacity: 0.85; }
   .logo-name {
     display: flex; flex-direction: column; line-height: 1.1;
     font-size: 13px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg);
