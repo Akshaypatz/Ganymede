@@ -1,15 +1,16 @@
-name: Beta Build
+name: Manual Beta Build
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_dispatch: # Keeps the workflow manual-only to prevent unexpected auto-runs
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
-  contents: write # Allows the action to commit files back to your repository
+  contents: write # Essential for letting the bot commit the final installers back to your repo
 
 jobs:
-  build-and-commit:
+  build-macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,13 +32,66 @@ jobs:
       - name: Build Tauri App (macOS Apple Silicon)
         run: npm run tauri build -- --target aarch64-apple-darwin
 
-      - name: Copy Installer to Beta Preview Folder
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Ganymede_*.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Tauri App (Windows Native x64)
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Ganymede_*.msi
+
+  consolidate-and-commit:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Download Built Installers
+        uses: actions/download-artifact@v4
+        with:
+          path: temp-artifacts
+
+      - name: Organize Into Beta Preview Folder
         run: |
           mkdir -p beta-preview/macos
-          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Ganymede_*.dmg beta-preview/macos/
+          mkdir -p beta-preview/windows
+          
+          # Move files dynamically to ignore variable version numbers
+          find temp-artifacts/macos-installer -name "*.dmg" -exec cp {} beta-preview/macos/ \;
+          find temp-artifacts/windows-installer -name "*.msi" -exec cp {} beta-preview/windows/ \;
+          
+          rm -rf temp-artifacts
 
-      - name: Commit and Push Changes to GitHub
+      - name: Commit and Push to Repository
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: automated update of macOS beta executable [skip ci]"
+          commit_message: "chore: manual beta release update [skip ci]"
           file_pattern: 'beta-preview/*'
