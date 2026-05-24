@@ -34,7 +34,7 @@ jobs:
       - name: Copy to Beta Preview Folder
         run: |
           mkdir -p beta-preview/macos
-          cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Ganymede_*.dmg beta-preview/macos/
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Ganymede_*.dmg beta-preview/macos/Ganymede-${{ matrix.target }}.dmg || true
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
@@ -67,10 +67,37 @@ jobs:
       - name: Copy to Beta Preview Folder
         run: |
           New-Item -ItemType Directory -Force -Path beta-preview\windows
-          Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Ganymede_*.msi beta-preview\windows\
+          Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Ganymede_*.msi beta-preview\windows\Ganymede-windows.msi -ErrorAction SilentlyContinue
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
           path: beta-preview/windows/
+
+  commit-artifacts:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: beta-preview
+
+      - name: Flatten artifact structure
+        run: |
+          mkdir -p beta-preview/macos beta-preview/windows
+          find beta-preview -name "*.dmg" -exec mv {} beta-preview/macos/ \;
+          find beta-preview -name "*.msi" -exec mv {} beta-preview/windows/ \;
+          rm -rf beta-preview/macos-build-* beta-preview/windows-build
+
+      - name: Commit and push artifacts
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add beta-preview/
+          git commit -m "chore: Update beta preview builds" || echo "No changes to commit"
+          git push
