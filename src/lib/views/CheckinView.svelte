@@ -129,6 +129,20 @@
     collapsed = { ...collapsed, [key]: !collapsed[key] };
   }
 
+  // Recompute total_attention to reflect only visible sections (respects cfg)
+  $: if ($checkinReport && cfg) {
+    const visible =
+      (cfg.showOverdue   ? $checkinReport.overdue.length         : 0) +
+      (cfg.showBlocked   ? $checkinReport.blocked.length         : 0) +
+      (cfg.showStale     ? $checkinReport.stale.length           : 0) +
+      (cfg.showDueSoon   ? $checkinReport.due_soon.length        : 0) +
+      (cfg.showPendingMe ? $checkinReport.pending_me.length      : 0) +
+      (cfg.showAtRisk    ? $checkinReport.at_risk_projects.length : 0);
+    if ($checkinReport.total_attention !== visible) {
+      checkinReport.update(r => r ? { ...r, total_attention: visible } : r);
+    }
+  }
+
   function priorityColor(p: string) {
     if (p === "p0") return "var(--p0)";
     if (p === "p1") return "var(--p1)";

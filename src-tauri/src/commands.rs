@@ -703,3 +703,302 @@ fn update_project_progress(conn: &rusqlite::Connection, project_id: &str) {
     let progress = (done * 100) / total;
     conn.execute("UPDATE projects SET progress=?1 WHERE id=?2", rusqlite::params![progress, project_id]).ok();
 }
+
+// ─── Export / Import ────────────────────────────────
+
+/// Returns a JSON string containing all user data. Used for backup and re-import.
+#[tauri::command]
+pub fn export_json(db: State<Database>) -> Result<String, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Projects with their member IDs
+    let mut proj_stmt = conn.prepare(
+        "SELECT p.id, p.name, p.description, p.stage, p.health, p.progress, p.due_date, p.owner_id, p.created_at, p.updated_at FROM projects p ORDER BY p.created_at"
+    ).map_err(|e| e.to_string())?;
+    let projects_raw: Vec<serde_json::Value> = proj_stmt.query_map([], |r| {
+        Ok((
+            r.get::<_,String>(0)?,  // id
+            r.get::<_,String>(1)?,  // name
+            r.get::<_,String>(2)?,  // description
+            r.get::<_,String>(3)?,  // stage
+            r.get::<_,String>(4)?,  // health
+            r.get::<_,i32>(5)?,     // progress
+            r.get::<_,Option<String>>(6)?,  // due_date
+            r.get::<_,Option<String>>(7)?,  // owner_id
+            r.get::<_,String>(8)?,  // created_at
+            r.get::<_,String>(9)?,  // updated_at
+        ))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .map(|(id, name, desc, stage, health, progress, due_date, owner_id, created_at, updated_at)| {
+        let member_ids: Vec<String> = conn.prepare(
+            "SELECT member_id FROM project_members WHERE project_id=?1"
+        ).ok().and_then(|mut s| {
+            s.query_map([&id], |r| r.get::<_,String>(0)).ok().map(|rows| {
+                rows.filter_map(|r| r.ok()).collect()
+            })
+        }).unwrap_or_default();
+
+        serde_json::json!({
+            "id": id, "name": name, "description": desc,
+            "stage": stage, "health": health, "progress": progress,
+            "due_date": due_date, "owner_id": owner_id,
+            "created_at": created_at, "updated_at": updated_at,
+            "member_ids": member_ids,
+        })
+    })
+    .collect();
+
+    // Items with tag IDs
+    let mut item_stmt = conn.prepare(
+        "SELECT id, project_id, type, title, body, priority, status, assignee, due_at, created_at, updated_at, category FROM items ORDER BY created_at"
+    ).map_err(|e| e.to_string())?;
+    let items_raw: Vec<serde_json::Value> = item_stmt.query_map([], |r| {
+        Ok((
+            r.get::<_,String>(0)?,
+            r.get::<_,Option<String>>(1)?,
+            r.get::<_,String>(2)?,
+            r.get::<_,String>(3)?,
+            r.get::<_,String>(4)?,
+            r.get::<_,String>(5)?,
+            r.get::<_,String>(6)?,
+            r.get::<_,String>(7)?,
+            r.get::<_,Option<String>>(8)?,
+            r.get::<_,String>(9)?,
+            r.get::<_,String>(10)?,
+            r.get::<_,Option<String>>(11)?,
+        ))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .map(|(id, project_id, itype, title, body, priority, status, assignee, due_at, created_at, updated_at, category)| {
+        let tag_ids: Vec<String> = conn.prepare(
+            "SELECT tag_id FROM item_tags WHERE item_id=?1"
+        ).ok().and_then(|mut s| {
+            s.query_map([&id], |r| r.get::<_,String>(0)).ok().map(|rows| {
+                rows.filter_map(|r| r.ok()).collect()
+            })
+        }).unwrap_or_default();
+
+        serde_json::json!({
+            "id": id, "project_id": project_id, "type": itype,
+            "title": title, "body": body, "priority": priority, "status": status,
+            "assignee": assignee, "due_at": due_at,
+            "created_at": created_at, "updated_at": updated_at,
+            "category": category, "tag_ids": tag_ids,
+        })
+    })
+    .collect();
+
+    // Members
+    let mut mem_stmt = conn.prepare(
+        "SELECT id, name, email, color, created_at FROM members ORDER BY name"
+    ).map_err(|e| e.to_string())?;
+    let members_raw: Vec<serde_json::Value> = mem_stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_,String>(0)?,
+            "name": r.get::<_,String>(1)?,
+            "email": r.get::<_,String>(2)?,
+            "color": r.get::<_,String>(3)?,
+            "created_at": r.get::<_,String>(4)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    // Tasks
+    let mut task_stmt = conn.prepare(
+        "SELECT id, project_id, title, description, status, assignee_id, position, created_at, updated_at FROM tasks ORDER BY created_at"
+    ).map_err(|e| e.to_string())?;
+    let tasks_raw: Vec<serde_json::Value> = task_stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_,String>(0)?,
+            "project_id": r.get::<_,String>(1)?,
+            "title": r.get::<_,String>(2)?,
+            "description": r.get::<_,String>(3)?,
+            "status": r.get::<_,String>(4)?,
+            "assignee_id": r.get::<_,Option<String>>(5)?,
+            "position": r.get::<_,i32>(6)?,
+            "created_at": r.get::<_,String>(7)?,
+            "updated_at": r.get::<_,String>(8)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    // Tags
+    let mut tag_stmt = conn.prepare(
+        "SELECT id, name, color, category FROM tags ORDER BY name"
+    ).map_err(|e| e.to_string())?;
+    let tags_raw: Vec<serde_json::Value> = tag_stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_,String>(0)?,
+            "name": r.get::<_,String>(1)?,
+            "color": r.get::<_,String>(2)?,
+            "category": r.get::<_,String>(3)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    let export = serde_json::json!({
+        "version": 1,
+        "exported_at": Utc::now().to_rfc3339(),
+        "projects": projects_raw,
+        "items": items_raw,
+        "members": members_raw,
+        "tasks": tasks_raw,
+        "tags": tags_raw,
+    });
+
+    serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+}
+
+/// Imports a JSON backup produced by `export_json`. Skips records that already exist (by id).
+#[tauri::command]
+pub fn import_json(db: State<Database>, data: String) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(&data)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    let version = parsed["version"].as_u64().unwrap_or(0);
+    if version != 1 {
+        return Err(format!("Unsupported export version: {}. Expected 1.", version));
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let now = Utc::now().to_rfc3339();
+
+    let mut imported = std::collections::HashMap::<&str, usize>::new();
+    imported.insert("members", 0);
+    imported.insert("tags", 0);
+    imported.insert("projects", 0);
+    imported.insert("items", 0);
+    imported.insert("tasks", 0);
+
+    // Import members first (referenced by projects and items)
+    if let Some(members) = parsed["members"].as_array() {
+        for m in members {
+            let id = m["id"].as_str().unwrap_or("");
+            let name = m["name"].as_str().unwrap_or("");
+            let email = m["email"].as_str().unwrap_or("");
+            let color = m["color"].as_str().unwrap_or("#f97316");
+            let created_at = m["created_at"].as_str().unwrap_or(&now);
+            if id.is_empty() || name.is_empty() { continue; }
+            let affected = conn.execute(
+                "INSERT OR IGNORE INTO members (id, name, email, color, created_at) VALUES (?1,?2,?3,?4,?5)",
+                rusqlite::params![id, name, email, color, created_at],
+            ).unwrap_or(0);
+            *imported.get_mut("members").unwrap() += affected;
+        }
+    }
+
+    // Import tags
+    if let Some(tags) = parsed["tags"].as_array() {
+        for t in tags {
+            let id = t["id"].as_str().unwrap_or("");
+            let name = t["name"].as_str().unwrap_or("");
+            let color = t["color"].as_str().unwrap_or("#737373");
+            let category = t["category"].as_str().unwrap_or("");
+            if id.is_empty() || name.is_empty() { continue; }
+            let affected = conn.execute(
+                "INSERT OR IGNORE INTO tags (id, name, color, category) VALUES (?1,?2,?3,?4)",
+                rusqlite::params![id, name, color, category],
+            ).unwrap_or(0);
+            *imported.get_mut("tags").unwrap() += affected;
+        }
+    }
+
+    // Import projects
+    if let Some(projects) = parsed["projects"].as_array() {
+        for p in projects {
+            let id = p["id"].as_str().unwrap_or("");
+            let name = p["name"].as_str().unwrap_or("");
+            let desc = p["description"].as_str().unwrap_or("");
+            let stage = p["stage"].as_str().unwrap_or("solutioning_pending");
+            let health = p["health"].as_str().unwrap_or("green");
+            let progress = p["progress"].as_i64().unwrap_or(0) as i32;
+            let due_date: Option<&str> = p["due_date"].as_str();
+            let owner_id: Option<&str> = p["owner_id"].as_str();
+            let created_at = p["created_at"].as_str().unwrap_or(&now);
+            let updated_at = p["updated_at"].as_str().unwrap_or(&now);
+            if id.is_empty() || name.is_empty() { continue; }
+            let affected = conn.execute(
+                "INSERT OR IGNORE INTO projects (id, name, description, stage, health, progress, due_date, owner_id, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                rusqlite::params![id, name, desc, stage, health, progress, due_date, owner_id, created_at, updated_at],
+            ).unwrap_or(0);
+            *imported.get_mut("projects").unwrap() += affected;
+            // Restore project members
+            if let Some(member_ids) = p["member_ids"].as_array() {
+                for mid in member_ids {
+                    if let Some(mid_str) = mid.as_str() {
+                        conn.execute(
+                            "INSERT OR IGNORE INTO project_members (project_id, member_id, role) VALUES (?1,?2,'member')",
+                            rusqlite::params![id, mid_str],
+                        ).ok();
+                    }
+                }
+            }
+        }
+    }
+
+    // Import items
+    if let Some(items) = parsed["items"].as_array() {
+        for item in items {
+            let id = item["id"].as_str().unwrap_or("");
+            let project_id: Option<&str> = item["project_id"].as_str();
+            let itype = item["type"].as_str().unwrap_or("issue");
+            let title = item["title"].as_str().unwrap_or("");
+            let body = item["body"].as_str().unwrap_or("");
+            let priority = item["priority"].as_str().unwrap_or("p2");
+            let status = item["status"].as_str().unwrap_or("open");
+            let assignee = item["assignee"].as_str().unwrap_or("");
+            let due_at: Option<&str> = item["due_at"].as_str();
+            let created_at = item["created_at"].as_str().unwrap_or(&now);
+            let updated_at = item["updated_at"].as_str().unwrap_or(&now);
+            let category = item["category"].as_str().unwrap_or("");
+            if id.is_empty() || title.is_empty() { continue; }
+            let affected = conn.execute(
+                "INSERT OR IGNORE INTO items (id, project_id, type, title, body, priority, status, assignee, due_at, created_at, updated_at, category) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                rusqlite::params![id, project_id, itype, title, body, priority, status, assignee, due_at, created_at, updated_at, category],
+            ).unwrap_or(0);
+            *imported.get_mut("items").unwrap() += affected;
+            // Restore item tags
+            if let Some(tag_ids) = item["tag_ids"].as_array() {
+                for tid in tag_ids {
+                    if let Some(tid_str) = tid.as_str() {
+                        conn.execute(
+                            "INSERT OR IGNORE INTO item_tags (item_id, tag_id) VALUES (?1,?2)",
+                            rusqlite::params![id, tid_str],
+                        ).ok();
+                    }
+                }
+            }
+        }
+    }
+
+    // Import tasks
+    if let Some(tasks) = parsed["tasks"].as_array() {
+        for t in tasks {
+            let id = t["id"].as_str().unwrap_or("");
+            let project_id = t["project_id"].as_str().unwrap_or("");
+            let title = t["title"].as_str().unwrap_or("");
+            let desc = t["description"].as_str().unwrap_or("");
+            let status = t["status"].as_str().unwrap_or("todo");
+            let assignee_id: Option<&str> = t["assignee_id"].as_str();
+            let position = t["position"].as_i64().unwrap_or(0) as i32;
+            let created_at = t["created_at"].as_str().unwrap_or(&now);
+            let updated_at = t["updated_at"].as_str().unwrap_or(&now);
+            if id.is_empty() || project_id.is_empty() || title.is_empty() { continue; }
+            let affected = conn.execute(
+                "INSERT OR IGNORE INTO tasks (id, project_id, title, description, status, assignee_id, position, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                rusqlite::params![id, project_id, title, desc, status, assignee_id, position, created_at, updated_at],
+            ).unwrap_or(0);
+            *imported.get_mut("tasks").unwrap() += affected;
+        }
+    }
+
+    Ok(format!(
+        "Import complete: {} projects, {} items, {} tasks, {} members, {} tags",
+        imported["projects"], imported["items"], imported["tasks"],
+        imported["members"], imported["tags"]
+    ))
+}

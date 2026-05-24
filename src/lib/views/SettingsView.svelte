@@ -15,6 +15,7 @@
   import { getSetting, setSetting, listMembers, listItems,
     createMember, deleteMember, listProjects, createProject,
     createItem, createTask, resetAppData, listReminders, deleteReminder,
+    exportJson, importJson,
   } from "../api";
   import type { Reminder } from "../types";
   import { FOLLOWUP_TAGS } from "../types";
@@ -179,6 +180,167 @@
   // Data tab: reset
   let resetConfirmText = "";
   let resetting = false;
+
+  // Data tab: export
+  let exporting = false;
+  let exportImporting = false;
+
+  async function handleExportJson() {
+    exporting = true;
+    try {
+      const json = await exportJson();
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const path = await save({
+        defaultPath: `ganymede-backup-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: "JSON Backup", extensions: ["json"] }],
+      });
+      if (!path) return;
+      await writeTextFile(path, json);
+      addToast("Backup saved", "✓");
+    } catch (err: any) {
+      addToast(`Export failed: ${err?.message || err}`, "✗");
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function handleExportCsv() {
+    exporting = true;
+    try {
+      const json = await exportJson();
+      const data = JSON.parse(json);
+      const { items = [], projects = [], members = [], tasks = [] } = data;
+
+      // Build project lookup
+      const projectMap = new Map(projects.map((p: any) => [p.id, p.name]));
+
+      // Items CSV
+      const itemHeaders = ["id","type","title","body","priority","status","assignee","project","due_at","created_at"];
+      const itemRows = items.map((i: any) => [
+        i.id, i.type, `"${(i.title || "").replace(/"/g, '""')}"`,
+        `"${(i.body || "").replace(/"/g, '""')}"`,
+        i.priority, i.status, i.assignee,
+        `"${projectMap.get(i.project_id) || ""}"`,
+        i.due_at || "", i.created_at,
+      ].join(","));
+      const itemsCsv = [itemHeaders.join(","), ...itemRows].join("\n");
+
+      // Tasks CSV
+      const taskHeaders = ["id","project","title","description","status","created_at"];
+      const taskRows = tasks.map((t: any) => [
+        t.id, `"${(projectMap.get(t.project_id) || "").replace(/"/g, '""')}"`,
+        `"${(t.title || "").replace(/"/g, '""')}"`,
+        `"${(t.description || "").replace(/"/g, '""')}"`,
+        t.status, t.created_at,
+      ].join(","));
+      const tasksCsv = [taskHeaders.join(","), ...taskRows].join("\n");
+
+      // Projects CSV
+      const projHeaders = ["id","name","stage","health","progress","due_date","created_at"];
+      const projRows = projects.map((p: any) => [
+        p.id, `"${(p.name || "").replace(/"/g, '""')}"`,
+        p.stage, p.health, p.progress, p.due_date || "", p.created_at,
+      ].join(","));
+      const projectsCsv = [projHeaders.join(","), ...projRows].join("\n");
+
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const folder = await open({ directory: true, title: "Choose folder to save CSV files" });
+      if (!folder) return;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      await writeTextFile(`${folder}/ganymede-items-${dateStr}.csv`, itemsCsv);
+      await writeTextFile(`${folder}/ganymede-tasks-${dateStr}.csv`, tasksCsv);
+      await writeTextFile(`${folder}/ganymede-projects-${dateStr}.csv`, projectsCsv);
+      addToast("CSV files saved (items, tasks, projects)", "✓");
+    } catch (err: any) {
+      addToast(`CSV export failed: ${err?.message || err}`, "✗");
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function handleExportExcel() {
+    exporting = true;
+    try {
+      const json = await exportJson();
+      const data = JSON.parse(json);
+      const { items = [], projects = [], members = [], tasks = [] } = data;
+      const projectMap = new Map(projects.map((p: any) => [p.id, p.name]));
+
+      const XLSX = await import("xlsx");
+      const wb = XLSX.utils.book_new();
+
+      // Items sheet
+      const itemSheet = items.map((i: any) => ({
+        ID: i.id, Type: i.type, Title: i.title, Description: i.body,
+        Priority: i.priority, Status: i.status, Assignee: i.assignee,
+        Project: projectMap.get(i.project_id) || "",
+        "Due Date": i.due_at || "", "Created At": i.created_at,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemSheet), "Items");
+
+      // Tasks sheet
+      const taskSheet = tasks.map((t: any) => ({
+        ID: t.id, Project: projectMap.get(t.project_id) || "",
+        Title: t.title, Description: t.description,
+        Status: t.status, "Created At": t.created_at,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(taskSheet), "Tasks");
+
+      // Projects sheet
+      const projSheet = projects.map((p: any) => ({
+        ID: p.id, Name: p.name, Stage: p.stage, Health: p.health,
+        "Progress %": p.progress, "Due Date": p.due_date || "",
+        "Created At": p.created_at,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(projSheet), "Projects");
+
+      // Members sheet
+      const memSheet = members.map((m: any) => ({
+        ID: m.id, Name: m.name, Email: m.email, "Created At": m.created_at,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(memSheet), "Members");
+
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      const path = await save({
+        defaultPath: `ganymede-export-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+      });
+      if (!path) return;
+      const buf: Uint8Array = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      await writeFile(path, buf);
+      addToast("Excel workbook saved", "✓");
+    } catch (err: any) {
+      addToast(`Excel export failed: ${err?.message || err}`, "✗");
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function handleImportJsonFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    exportImporting = true;
+    try {
+      const text = await file.text();
+      const result = await importJson(text);
+      const [p, it, m] = await Promise.all([
+        listProjects().catch(() => []),
+        listItems().catch(() => []),
+        listMembers().catch(() => []),
+      ]);
+      projects.set(p); items.set(it); members.set(m);
+      addToast(result, "✓");
+    } catch (err: any) {
+      addToast(`Import failed: ${err?.message || err}`, "✗");
+    } finally {
+      exportImporting = false;
+      input.value = "";
+    }
+  }
 
   function onProviderChange() {
     const preset = providerPresets[aiProvider];
@@ -905,6 +1067,37 @@
     {/if}
   </div>
 
+  <div class="settings-section">
+    <h3 class="section-title">Export Data</h3>
+    <p class="section-desc">Export your data for backup or to import into a new installation. JSON format preserves all data and can be re-imported.</p>
+
+    <div class="export-row">
+      <button class="export-btn" on:click={handleExportJson} disabled={exporting}>
+        <span class="export-icon">JSON</span>
+        Export JSON
+        <span class="export-hint">Full backup · re-importable</span>
+      </button>
+      <button class="export-btn" on:click={handleExportCsv} disabled={exporting}>
+        <span class="export-icon">CSV</span>
+        Export CSV
+        <span class="export-hint">3 files: items, tasks, projects</span>
+      </button>
+      <button class="export-btn" on:click={handleExportExcel} disabled={exporting}>
+        <span class="export-icon">XLS</span>
+        Export Excel
+        <span class="export-hint">Single .xlsx workbook</span>
+      </button>
+    </div>
+
+    <div class="import-json-row">
+      <label class="upload-btn" style="margin-top:10px;">
+        <input type="file" accept=".json" on:change={handleImportJsonFile} class="file-input-hidden" />
+        {exportImporting ? "Importing…" : "Import JSON backup…"}
+      </label>
+      <span class="file-name" style="margin-top:10px;">Restores from a Ganymede JSON export (skips duplicates)</span>
+    </div>
+  </div>
+
   <div class="settings-section danger-zone">
     <h3 class="section-title">Reset App Data</h3>
     <p class="section-desc">This wipes all user-entered data from SQLite: projects, items, tasks, members, boards, AI history, settings, and activity.</p>
@@ -1123,4 +1316,27 @@
     background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.25);
     border-radius: var(--r); padding: 8px 12px; margin-bottom: 10px;
   }
+
+  /* Export section */
+  .export-row {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;
+  }
+  .export-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 12px 18px; border-radius: var(--r-lg);
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--fg); font-size: 13px; font-weight: 700; cursor: pointer;
+    transition: border-color .15s, background .15s; min-width: 120px;
+  }
+  .export-btn:hover { border-color: var(--orange); background: rgba(249,115,22,.06); }
+  .export-btn:disabled { opacity: .55; cursor: wait; }
+  .export-icon {
+    font-size: 10px; font-weight: 800; letter-spacing: .05em;
+    color: var(--orange); background: rgba(249,115,22,.12);
+    border-radius: 4px; padding: 2px 6px; font-family: monospace;
+  }
+  .export-hint {
+    font-size: 10px; color: var(--fg-4); font-weight: 400; text-align: center;
+  }
+  .import-json-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 </style>

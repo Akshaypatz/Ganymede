@@ -256,14 +256,16 @@ pub fn get_checkin_report(db: State<'_, Database>) -> Result<CheckinReport, Stri
         }
     }
 
-    // At-risk projects: health=red OR no items updated in 14+ days
+    // At-risk projects: health=red OR has items but none updated in 14+ days
     let mut proj_stmt = conn
         .prepare(
             "SELECT p.id, p.name, p.health, p.stage, p.updated_at
              FROM projects p
              WHERE p.health = 'red'
-                OR (SELECT MAX(i.updated_at) FROM items i WHERE i.project_id = p.id) < datetime('now', '-14 days')
-                OR (SELECT COUNT(*) FROM items i WHERE i.project_id = p.id) = 0
+                OR (
+                  (SELECT COUNT(*) FROM items i WHERE i.project_id = p.id) > 0
+                  AND (SELECT MAX(i.updated_at) FROM items i WHERE i.project_id = p.id) < datetime('now', '-14 days')
+                )
              LIMIT 10",
         )
         .map_err(|e| e.to_string())?;

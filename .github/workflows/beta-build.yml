@@ -1,0 +1,95 @@
+name: Build and Push to Beta Preview
+
+on:
+  push:
+    branches:
+      - main # Change this to 'beta' or your preferred development branch
+  workflow_dispatch: # Allows you to manually trigger this build from the GitHub Actions tab
+
+permissions:
+  contents: write # Crucial: gives the action permission to commit files back to your repo
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: universal-apple-darwin
+
+      - name: Build Tauri App (Universal macOS)
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/Ganymede_*.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Tauri App (Windows x64)
+        run: npm run tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ganymede_*_x64-setup.exe
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Ganymede_*.msi
+
+  commit-to-beta:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Download Built Binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: temp-artifacts
+
+      - name: Flatten and Move to Beta Preview Folder
+        run: |
+          mkdir -p beta-preview
+          # Dynamically finds and copies files to avoid strict version number hardcoding
+          find temp-artifacts -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.msi" \) -exec cp {} beta-preview/ \;
+          ls -R beta-preview
+
+      - name: Commit and Push Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: automated update of beta-preview executables [skip ci]"
+          file_pattern: 'beta-preview/*'

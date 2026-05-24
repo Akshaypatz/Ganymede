@@ -5,6 +5,7 @@ pub mod commands;
 pub mod db;
 pub mod models;
 pub mod reminders;
+mod tests;
 
 use db::Database;
 use tauri::Manager;
@@ -13,6 +14,8 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let app_dir = app
                 .path()
@@ -59,6 +62,8 @@ pub fn run() {
             commands::create_task,
             commands::update_task,
             commands::delete_task,
+            commands::export_json,
+            commands::import_json,
             ai::chat_with_ai,
             ai::apply_ai_action,
             ai::list_ai_conversations,

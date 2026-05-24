@@ -8,6 +8,9 @@
 
   let inputText = "";
   let chatContainer: HTMLDivElement;
+  let messageHistory: string[] = [];
+  let historyIndex = -1;
+  let requestGen = 0;
 
   function scrollToBottom() {
     setTimeout(() => {
@@ -19,6 +22,9 @@
     const msg = inputText.trim();
     if (!msg || $aiLoading) return;
     inputText = "";
+    messageHistory = [msg, ...messageHistory.slice(0, 49)];
+    historyIndex = -1;
+    const gen = ++requestGen;
 
     // Optimistically add user message
     aiMessages.update((msgs) => [
@@ -41,6 +47,8 @@
         message: msg,
         conversation_id: $aiConversationId || undefined,
       });
+      // Ignore stale responses if user aborted or sent a new message
+      if (gen !== requestGen) return;
       aiConversationId.set(response.conversation_id);
 
       // Add assistant message
@@ -58,6 +66,7 @@
       ]);
       scrollToBottom();
     } catch (e: any) {
+      if (gen !== requestGen) return;
       aiMessages.update((msgs) => [
         ...msgs,
         {
@@ -71,7 +80,13 @@
         },
       ]);
       scrollToBottom();
+    } finally {
+      if (gen === requestGen) aiLoading.set(false);
     }
+  }
+
+  function stopGeneration() {
+    requestGen++;
     aiLoading.set(false);
   }
 
@@ -113,6 +128,26 @@
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    } else if (e.key === "ArrowUp" && messageHistory.length > 0) {
+      const textarea = e.target as HTMLTextAreaElement;
+      if (textarea.selectionStart === 0 && textarea.selectionEnd === 0) {
+        e.preventDefault();
+        const next = Math.min(historyIndex + 1, messageHistory.length - 1);
+        historyIndex = next;
+        inputText = messageHistory[next];
+        // Move cursor to end on next tick
+        setTimeout(() => {
+          textarea.selectionStart = textarea.selectionEnd = inputText.length;
+        }, 0);
+      }
+    } else if (e.key === "ArrowDown" && historyIndex >= 0) {
+      const textarea = e.target as HTMLTextAreaElement;
+      if (textarea.selectionStart === textarea.value.length) {
+        e.preventDefault();
+        const prev = historyIndex - 1;
+        historyIndex = prev;
+        inputText = prev < 0 ? "" : messageHistory[prev];
+      }
     }
   }
 
@@ -219,9 +254,15 @@
         rows="2"
         on:keydown={handleKeydown}
       ></textarea>
-      <button class="ai-send" on:click={sendMessage} disabled={$aiLoading || !inputText.trim()}>
-        ↑
-      </button>
+      {#if $aiLoading}
+        <button class="ai-stop" on:click={stopGeneration} title="Stop generating">
+          ■
+        </button>
+      {:else}
+        <button class="ai-send" on:click={sendMessage} disabled={!inputText.trim()}>
+          ↑
+        </button>
+      {/if}
     </div>
   </div>
 {/if}
@@ -334,4 +375,11 @@
   }
   .ai-send:disabled { opacity: 0.4; cursor: not-allowed; }
   .ai-send:not(:disabled):hover { opacity: 0.9; }
+  .ai-stop {
+    width: 32px; height: 32px; border-radius: 50%; background: var(--surface-2);
+    color: var(--fg-2); border: 1px solid var(--border); font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    transition: background 120ms;
+  }
+  .ai-stop:hover { background: var(--border); }
 </style>

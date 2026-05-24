@@ -44,6 +44,11 @@ Rules:
 
 Use this table format for any response with 2+ items. For single items or conversational answers, prose is fine.
 
+11. When the user asks to RENAME a project ("rename project X to Y", "change the name of X to Y"), use `update_project` with the project's current name in `current_name` and the new name in `name`.
+12. When the user asks to ADD a member to a project ("add John to project X", "assign Sarah to X"), use `add_member_to_project`. If the member doesn't exist yet, first emit a `create_member` action, then `add_member_to_project`.
+13. Do NOT create a new project if a project with that name already exists (visible in the context). Use `update_project` to modify it.
+14. For `create_project`: only create if the project name is NOT already in the context's project list.
+
 You MUST respond with valid JSON in this exact format:
 {
   "message": "Your response in markdown — natural, professional, human",
@@ -67,6 +72,21 @@ For create_project data fields:
   - description: optional
   - stage: solutioning_pending | in_development | released | live
   - health: green | amber | red
+
+For update_project data fields:
+  - current_name: REQUIRED — the existing project name (used to find it)
+  - name: optional new name (for renaming)
+  - description: optional
+  - stage: optional
+  - health: optional
+
+For create_member data fields:
+  - name: REQUIRED — full name
+  - email: optional
+
+For add_member_to_project data fields:
+  - project_name: REQUIRED — name of the project
+  - member_name: REQUIRED — name of the member to add
 
 For create_task data fields:
   - title: REQUIRED — exact task title
@@ -345,11 +365,22 @@ pub async fn apply_ai_action(db: State<'_, Database>, action: AiAction) -> Resul
 
     match action.action_type.as_str() {
         "create_project" => {
-            let id = Uuid::new_v4().to_string();
             let name = action.data["name"].as_str().unwrap_or("Untitled Project");
             let desc = action.data["description"].as_str().unwrap_or("");
-            let stage = action.data["stage"].as_str().unwrap_or("discovery");
+            let stage = action.data["stage"].as_str().unwrap_or("solutioning_pending");
             let health = action.data["health"].as_str().unwrap_or("green");
+
+            // Deduplicate: if a project with this name already exists (case-insensitive), skip creation
+            let existing_id: Option<String> = conn.query_row(
+                "SELECT id FROM projects WHERE lower(name) = lower(?1)",
+                rusqlite::params![name],
+                |r| r.get(0),
+            ).ok();
+            if let Some(eid) = existing_id {
+                return Ok(format!("Project '{}' already exists (id: {})", name, eid));
+            }
+
+            let id = Uuid::new_v4().to_string();
             conn.execute(
                 "INSERT INTO projects (id, name, description, stage, health, progress, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,0,?6,?7)",
                 rusqlite::params![id, name, desc, stage, health, now, now],
@@ -359,6 +390,97 @@ pub async fn apply_ai_action(db: State<'_, Database>, action: AiAction) -> Resul
                 rusqlite::params![Uuid::new_v4().to_string(), id, format!("Project '{}' created via AI", name), now],
             ).ok();
             Ok(format!("Created project: {}", name))
+        }
+        "update_project" => {
+            // Find project by current_name (case-insensitive) or by id
+            let current_name = action.data["current_name"].as_str().unwrap_or("");
+            let project_id_hint = action.data["id"].as_str().unwrap_or("");
+            let pid: Option<String> = if !project_id_hint.is_empty() {
+                conn.query_row("SELECT id FROM projects WHERE id=?1", rusqlite::params![project_id_hint], |r| r.get(0)).ok()
+            } else if !current_name.is_empty() {
+                conn.query_row("SELECT id FROM projects WHERE lower(name)=lower(?1)", rusqlite::params![current_name], |r| r.get(0)).ok()
+            } else {
+                None
+            };
+            let pid = pid.ok_or_else(|| format!("Project '{}' not found", current_name))?;
+
+            let new_name = action.data["name"].as_str();
+            let new_desc = action.data["description"].as_str();
+            let new_stage = action.data["stage"].as_str();
+            let new_health = action.data["health"].as_str();
+
+            // Fetch existing values
+            let (old_name, old_desc, old_stage, old_health): (String, String, String, String) = conn.query_row(
+                "SELECT name, description, stage, health FROM projects WHERE id=?1",
+                rusqlite::params![pid],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).map_err(|e| e.to_string())?;
+
+            let final_name  = new_name.unwrap_or(&old_name);
+            let final_desc  = new_desc.unwrap_or(&old_desc);
+            let final_stage = new_stage.unwrap_or(&old_stage);
+            let final_health = new_health.unwrap_or(&old_health);
+
+            conn.execute(
+                "UPDATE projects SET name=?1, description=?2, stage=?3, health=?4, updated_at=?5 WHERE id=?6",
+                rusqlite::params![final_name, final_desc, final_stage, final_health, now, pid],
+            ).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO activity_log (id, project_id, action, detail, created_at) VALUES (?1,?2,'updated',?3,?4)",
+                rusqlite::params![Uuid::new_v4().to_string(), pid, format!("Project updated via AI: '{}' → '{}'", old_name, final_name), now],
+            ).ok();
+            Ok(format!("Updated project: {} → {}", old_name, final_name))
+        }
+        "create_member" => {
+            let name = action.data["name"].as_str().unwrap_or("").trim().to_string();
+            if name.is_empty() {
+                return Err("Member name is required".into());
+            }
+            // Deduplicate by name (case-insensitive)
+            let existing: Option<String> = conn.query_row(
+                "SELECT id FROM members WHERE lower(name)=lower(?1)",
+                rusqlite::params![name],
+                |r| r.get(0),
+            ).ok();
+            if let Some(eid) = existing {
+                return Ok(format!("Member '{}' already exists (id: {})", name, eid));
+            }
+            let id = Uuid::new_v4().to_string();
+            let email = action.data["email"].as_str().unwrap_or("");
+            let colors = ["#f97316","#3b82f6","#8b5cf6","#ef4444","#10b981","#f59e0b","#ec4899","#06b6d4"];
+            let color_idx: usize = conn.query_row("SELECT COUNT(*) FROM members", [], |r| r.get::<_,usize>(0)).unwrap_or(0) % colors.len();
+            let color = colors[color_idx];
+            conn.execute(
+                "INSERT INTO members (id, name, email, color, created_at) VALUES (?1,?2,?3,?4,?5)",
+                rusqlite::params![id, name, email, color, now],
+            ).map_err(|e| e.to_string())?;
+            Ok(format!("Created member: {}", name))
+        }
+        "add_member_to_project" => {
+            let project_name = action.data["project_name"].as_str().unwrap_or("");
+            let member_name  = action.data["member_name"].as_str().unwrap_or("");
+            if project_name.is_empty() || member_name.is_empty() {
+                return Err("project_name and member_name are required for add_member_to_project".into());
+            }
+            let project_id: String = conn.query_row(
+                "SELECT id FROM projects WHERE lower(name)=lower(?1)",
+                rusqlite::params![project_name],
+                |r| r.get(0),
+            ).map_err(|_| format!("Project '{}' not found", project_name))?;
+            let member_id: String = conn.query_row(
+                "SELECT id FROM members WHERE lower(name)=lower(?1)",
+                rusqlite::params![member_name],
+                |r| r.get(0),
+            ).map_err(|_| format!("Member '{}' not found — create the member first", member_name))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO project_members (project_id, member_id, role) VALUES (?1,?2,'member')",
+                rusqlite::params![project_id, member_id],
+            ).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO activity_log (id, project_id, action, detail, created_at) VALUES (?1,?2,'member_added',?3,?4)",
+                rusqlite::params![Uuid::new_v4().to_string(), project_id, format!("Member '{}' added to project '{}' via AI", member_name, project_name), now],
+            ).ok();
+            Ok(format!("Added {} to project {}", member_name, project_name))
         }
         "create_item" => {
             let id = Uuid::new_v4().to_string();

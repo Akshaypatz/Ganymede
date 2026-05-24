@@ -108,3 +108,7 @@ export const deleteReminder = (id: string) => invoke<void>("delete_reminder", { 
 
 // ─── Auth ────────────────────────────────────────────
 export const tryBiometricAuth = () => invoke<string>("try_biometric_auth");
+
+// ─── Export / Import ────────────────────────────────
+export const exportJson = () => invoke<string>("export_json");
+export const importJson = (data: string) => invoke<string>("import_json", { data });
